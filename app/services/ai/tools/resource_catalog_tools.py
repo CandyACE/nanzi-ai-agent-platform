@@ -214,6 +214,11 @@ async def list_accessible_directories() -> str:
             SANDBOX_POLICY_DOCKER,
             SANDBOX_POLICY_K8S,
         )
+        # 机读命名空间：Docker 与 K8s 都是沙箱，但值必须可区分，否则模型在 K8s 下
+        # 读到的执行环境仍是 "docker_sandbox"，容易做出错误的路径/工具推断。
+        sandbox_namespace = (
+            f"{effective_policy}_sandbox" if is_sandbox else "backend_service"
+        )
 
         workspace_root = await resolve_workspace_root(ensure_exists=False)
         resolved_user_id, resolved_user_name = extract_workspace_identity(
@@ -243,7 +248,7 @@ async def list_accessible_directories() -> str:
         def _path_namespace(container_path: str | None) -> dict[str, str | None]:
             return {
                 "bash": (
-                    "docker_sandbox"
+                    sandbox_namespace
                     if is_sandbox and container_path
                     else None
                     if is_sandbox
@@ -556,7 +561,7 @@ async def list_accessible_directories() -> str:
                 "category": "platform_root_help",
                 "description": (
                     "平台服务根目录帮助文档兜底来源；仅允许服务根目录一级 *.md，"
-                    "禁止通过 Docker 沙箱 Bash 访问或递归扫描 /app。"
+                    "禁止通过沙箱 Bash 访问或递归扫描 /app。"
                 ),
                 "recommended_for": ["公共 docs 未命中时查阅平台帮助与 FAQ"],
             }
@@ -565,7 +570,7 @@ async def list_accessible_directories() -> str:
 
         result = {
             "deployment_environment": "docker_container" if is_container_env else "host_machine",
-            "sandbox_execution_mode": "docker_sandbox" if is_sandbox else "host_local",
+            "sandbox_execution_mode": sandbox_namespace if is_sandbox else "host_local",
             "user_identity": {
                 "user_id": ctx.user_id,
                 "user_name": user_name,
@@ -580,7 +585,7 @@ async def list_accessible_directories() -> str:
                     "file_tools": ".",
                 },
                 "path_namespace": {
-                    "bash": "docker_sandbox" if is_sandbox else "backend_service",
+                    "bash": sandbox_namespace if is_sandbox else "backend_service",
                     "file_tools": "backend_service",
                 },
                 "access": "read_write",
@@ -592,14 +597,14 @@ async def list_accessible_directories() -> str:
             },
             "platform_help_files": platform_help_files,
             "usage_guidelines": [
-                "1. 在 Docker 沙箱环境下执行 Bash 命令或 Python 脚本时，请使用 paths.bash（通常以 /workspace 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，不能把 Bash 的容器路径直接当作文件工具路径；",
+                "1. 在沙箱环境（Docker/K8s）下执行 Bash 命令或 Python 脚本时，请使用 paths.bash（通常以 /workspace 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，不能把 Bash 的容器路径直接当作文件工具路径；",
                 "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
                 "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
                 "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",
                 (
-                    "5. 公共 docs 在 Docker 中通过 paths.bash=/workspace/public/docs 只读访问；"
+                    "5. 公共 docs 在沙箱中通过 paths.bash=/workspace/public/docs 只读访问；"
                     if public_docs_mounted
-                    else "5. 公共 docs 当前未挂载到 Docker Bash；"
+                    else "5. 公共 docs 当前未挂载到沙箱 Bash；"
                     if is_sandbox
                     else "5. 公共 docs 通过宿主文件工具只读访问；"
                 )

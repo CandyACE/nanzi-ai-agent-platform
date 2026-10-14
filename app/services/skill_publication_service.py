@@ -20,7 +20,10 @@ from app.core.config import settings
 from app.models.permission import ResourcePermission, UserRoleRelation
 from app.models.skill_publication import SkillPublication, SkillPublicationVersion
 from app.models.user import User
-from app.services.ai.skill_resolver import get_user_personal_skills_dir
+from app.services.ai.skill_resolver import (
+    get_user_personal_skills_dir,
+    resolve_personal_skill_dir,
+)
 from app.services.portal_notification_service import PortalNotificationService
 from app.utils.skill_metadata import parse_skill_frontmatter
 
@@ -155,7 +158,10 @@ def create_personal_skill_snapshot(
     personal_root = get_user_personal_skills_dir(user)
     if not personal_root:
         raise ValueError("user workspace is unavailable")
-    source_path = os.path.abspath(os.path.join(personal_root, skill_id))
+    # 兼容历史遗留的 .seed 布局（发布对象也是存量技能）
+    source_path = resolve_personal_skill_dir(
+        personal_root, skill_id
+    ) or os.path.abspath(os.path.join(personal_root, skill_id))
     _assert_inside(personal_root, source_path)
     if not os.path.isdir(source_path):
         raise FileNotFoundError("personal skill does not exist")
@@ -280,7 +286,9 @@ def _meta_for_personal_skill(*, user: dict[str, Any], skill_id: str) -> dict[str
     personal_root = get_user_personal_skills_dir(user)
     if not personal_root:
         raise ValueError("user workspace is unavailable")
-    skill_dir = os.path.join(personal_root, skill_id)
+    skill_dir = resolve_personal_skill_dir(personal_root, skill_id) or os.path.join(
+        personal_root, skill_id
+    )
     if not os.path.isdir(skill_dir) or not os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
         raise FileNotFoundError("personal skill does not exist or is missing SKILL.md")
     return parse_skill_frontmatter(skill_id, os.path.join(skill_dir, "SKILL.md"))
@@ -464,7 +472,10 @@ async def submit_personal_skill(session: AsyncSession, *, user: dict[str, Any], 
     source_root = get_user_personal_skills_dir(user)
     if not source_root:
         raise ValueError("user workspace is unavailable")
-    source_stats = validate_snapshot_tree(os.path.join(source_root, skill_id))
+    resolved_source = resolve_personal_skill_dir(source_root, skill_id) or os.path.join(
+        source_root, skill_id
+    )
+    source_stats = validate_snapshot_tree(resolved_source)
     if pending is not None:
         if pending.content_sha256 == source_stats.content_sha256:
             return _publication_payload(publication, pending)

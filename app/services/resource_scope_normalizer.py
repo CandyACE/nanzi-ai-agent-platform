@@ -110,17 +110,27 @@ async def normalize_resource_scope_for_user(
 
     skill_by_token: Dict[tuple[str, str], Dict[str, Any]] = {}
 
-    def collect_skills(root: str, scope_name: str) -> None:
+    def collect_skills(root: str, scope_name: str, *, allow_seed: bool = False) -> None:
         if not root or not os.path.isdir(root):
             return
-        try:
-            entries = os.listdir(root)
-        except OSError:
-            return
-        for skill_id in entries:
-            skill_dir = os.path.join(root, skill_id)
+        if allow_seed:
+            # 个人技能源可能仍是历史遗留的 .seed 布局（K8s 未修复期的产物）
+            from app.services.ai.skill_resolver import iter_personal_skill_dirs
+
+            candidates = list(iter_personal_skill_dirs(root))
+        else:
+            try:
+                entries = os.listdir(root)
+            except OSError:
+                return
+            candidates = [
+                (skill_id, os.path.join(root, skill_id))
+                for skill_id in entries
+                if not skill_id.startswith(".")
+            ]
+        for skill_id, skill_dir in candidates:
             skill_md = os.path.join(skill_dir, "SKILL.md")
-            if not os.path.isdir(skill_dir) or skill_id.startswith(".") or not os.path.isfile(skill_md):
+            if not os.path.isdir(skill_dir) or not os.path.isfile(skill_md):
                 continue
             meta = parse_skill_metadata(skill_id, skill_md)
             if str(meta.get("enabled", "true")).strip().lower() in {"false", "0", "no", "off"}:
@@ -134,7 +144,11 @@ async def normalize_resource_scope_for_user(
 
     collect_skills(str(getattr(settings, "SKILLS_DIR", "") or ""), "global")
     try:
-        collect_skills(str(get_user_personal_skills_dir(user_info) or ""), "personal")
+        collect_skills(
+            str(get_user_personal_skills_dir(user_info) or ""),
+            "personal",
+            allow_seed=True,
+        )
     except Exception:
         pass
 

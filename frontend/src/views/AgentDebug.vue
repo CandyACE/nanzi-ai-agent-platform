@@ -107,7 +107,11 @@ import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
 import { useSandboxWorkspace } from "@/composables/chat/useSandboxWorkspace";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
-import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
+import {
+  createSkillNotifyGate,
+  parseLatestSkillCreatedMarker,
+  type SkillCreatedInfo,
+} from "@/utils/skillCreated";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
@@ -2390,6 +2394,10 @@ const collectKnowledgeDatasetIds = (): string[] => {
 };
 
 const skillCreatedInfo = ref<SkillCreatedInfo | null>(null);
+// 「已创建个人技能」横幅的去重闸门：NANZI_SKILL_CREATED 标记会随消息历史长期存在，
+// 而下面的 watch 在每次 messages 变化（发消息 / 流式回复 / 刷新加载历史 / 切回会话）
+// 时都会重扫整段历史；不去重就会反复弹出，且用户关闭后立刻又出现。
+const skillNotifyGate = createSkillNotifyGate(() => conversationId.value);
 
 watch(
   () =>
@@ -2402,12 +2410,19 @@ watch(
       )
       .join("\n---\n"),
   (blob) => {
-    const info = parseSkillCreatedMarker(blob);
-    if (info && info.scope === "personal") {
-      skillCreatedInfo.value = info;
-    }
+    const info = parseLatestSkillCreatedMarker(blob);
+    if (!info || info.scope !== "personal") return;
+    if (!skillNotifyGate.shouldNotify(info.skill_id)) return;
+    skillCreatedInfo.value = info;
   },
 );
+
+const dismissCreatedSkill = () => {
+  if (skillCreatedInfo.value) {
+    skillNotifyGate.mark(skillCreatedInfo.value.skill_id);
+  }
+  skillCreatedInfo.value = null;
+};
 
 const mountCreatedSkill = () => {
   if (!skillCreatedInfo.value) return;
@@ -5168,7 +5183,7 @@ onUnmounted(() => {
           <SkillCreatedBanner
             :info="skillCreatedInfo"
             @mount="mountCreatedSkill"
-            @dismiss="skillCreatedInfo = null"
+            @dismiss="dismissCreatedSkill"
           />
         </div>
         <ChatInput

@@ -417,7 +417,7 @@ const sandboxLocalExecDesc = computed(() =>
 
 /** sandbox_policy 短描述：local 部分随运行环境动态渲染 */
 const sandboxPolicyShortDesc = computed(() =>
-  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；docker 表示在自动构建的 Docker 容器内执行${runtimeEnv.value === 'docker' ? '（通过宿主机 Docker Socket 隔离）' : ''}；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
+  `安全沙箱执行策略。local 表示${sandboxLocalExecDesc.value}；docker 表示在自动构建的 Docker 容器内执行${runtimeEnv.value === 'docker' ? '（通过宿主机 Docker Socket 隔离）' : ''}；k8s 表示在 Kubernetes 集群内动态拉起独立 Pod 执行（云原生生产部署推荐）；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。`,
 )
 
 /** sandbox_policy 详细说明：local 部分随运行环境动态渲染（用于说明弹窗） */

@@ -197,7 +197,7 @@ async def test_list_accessible_directories_docker_without_public_docs_mount():
         "file_tools": public_docs["backend_service_path"],
     }
     assert public_docs["access_via"] == ["Read", "Glob", "Grep"]
-    assert "未挂载到 Docker Bash" in data["usage_guidelines"][4]
+    assert "未挂载到沙箱 Bash" in data["usage_guidelines"][4]
 
 
 @pytest.mark.asyncio
@@ -364,6 +364,10 @@ async def test_list_accessible_directories_k8s_sandbox_uses_docker_aligned_paths
         raw = await list_accessible_directories.ainvoke({})
         data = json.loads(raw)
 
+        # 机读执行模式必须能区分策略：否则模型在 K8s 下读到的仍是 "docker_sandbox"，
+        # 会做出错误的执行环境与路径推断
+        assert data["sandbox_execution_mode"] == "k8s_sandbox"
+
         public_dirs = {
             item["directory_name"]: item
             for item in data["public_directories"]["directories"]
@@ -385,3 +389,4 @@ async def test_list_accessible_directories_k8s_sandbox_uses_docker_aligned_paths
             == "/workspace/personal-skills"
         )
         assert subdirs["skills"]["paths"]["bash"] == "/workspace/personal-skills"
+        assert subdirs["skills"]["path_namespace"]["bash"] == "k8s_sandbox"

@@ -67,3 +67,35 @@ def test_create_skills_emits_machine_marker():
     assert "NANZI_SKILL_CREATED" in text
     assert BANNER.exists()
     assert "parseSkillCreatedMarker" in SKILL_CREATED_UTIL.read_text(encoding="utf-8")
+
+
+def test_skill_created_banner_deduplicates_and_uses_latest_marker():
+    """「已创建个人技能」横幅必须去重并取最新标记。
+
+    回归背景：视图侧 watch 扫描的是**整个会话历史**，而 ``NANZI_SKILL_CREATED``
+    标记会随工具输出长期保留；原先既没有按 ``skill_id`` 去重，又用正则取「第一个」
+    匹配，于是每次 messages 变化（发消息 / 流式回复 / 刷新加载历史 / 切回会话）都会
+    重新弹出横幅，点 ✕ 关闭后下一轮又出现，且创建过多个技能时永远显示最早那一个。
+    """
+    util = SKILL_CREATED_UTIL.read_text(encoding="utf-8")
+    # 取「最后一个」标记，而不是第一个匹配
+    assert "export function parseLatestSkillCreatedMarker" in util
+    assert "MARKER_RE_GLOBAL" in util
+    # 按 skill_id 去重，并按会话持久化（刷新页面不再重复打扰）
+    assert "export function createSkillNotifyGate" in util
+    assert "localStorage" in util
+    # 保留原有的首个匹配解析（其它调用方与既有契约）
+    assert "export function parseSkillCreatedMarker" in util
+
+    for path in (EMBED, DEBUG):
+        text = path.read_text(encoding="utf-8")
+        assert "createSkillNotifyGate(() => conversationId.value)" in text
+        assert "parseLatestSkillCreatedMarker(blob)" in text
+        assert "skillNotifyGate.shouldNotify(info.skill_id)" in text
+        assert "const dismissCreatedSkill = ()" in text
+        assert "skillNotifyGate.mark(" in text
+        # 关闭必须记入已提示，不能只把状态置空
+        assert '@dismiss="dismissCreatedSkill"' in text
+        assert '@dismiss="skillCreatedInfo = null"' not in text
+        # 不应再拿「首个匹配」直接赋值弹出
+        assert "parseSkillCreatedMarker(blob)" not in text

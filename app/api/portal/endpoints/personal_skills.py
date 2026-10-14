@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
-from app.services.ai.skill_resolver import get_user_personal_skills_dir
+from app.services.ai.skill_resolver import (
+    get_user_personal_skills_dir,
+    iter_personal_skill_dirs,
+    resolve_personal_skill_dir,
+)
 from app.services.skill_publication_service import (
     PublicationConflictError,
     PublicationNotFoundError,
@@ -63,8 +67,13 @@ def _validate_personal_skill_path(
     if not re.match(r"^[a-zA-Z0-9_-]+$", skill_id):
         raise HTTPException(status_code=400, detail="技能 ID 只能包含字母、数字、下划线和连字符")
 
-    skills_root = _get_personal_skills_root(user_info)
-    skill_base = os.path.abspath(os.path.join(skills_root, skill_id))
+    skills_root = os.path.abspath(_get_personal_skills_root(user_info))
+    # 存量技能可能位于历史遗留的 .seed 布局下（K8s 未修复期的产物）：先定位真实
+    # 目录，找不到再回退到规范平铺位置（新建技能走这条）。否则编辑 .seed 里的技能
+    # 会在平铺处新建一份副本，出现「同一技能两份」。
+    skill_base = resolve_personal_skill_dir(skills_root, skill_id) or os.path.abspath(
+        os.path.join(skills_root, skill_id)
+    )
 
     if os.path.commonpath([skills_root, skill_base]) != skills_root:
         raise HTTPException(status_code=403, detail="安全拦截：个人技能路径越界")
@@ -88,14 +97,14 @@ async def list_personal_skills(user: dict = Depends(require_api_key)):
     skills_root = _get_personal_skills_root(user)
     skills_list = []
     try:
-        for item in sorted(os.listdir(skills_root)):
-            item_path = os.path.join(skills_root, item)
-            if os.path.isdir(item_path) and not item.startswith("."):
-                skill_md = os.path.join(item_path, "SKILL.md")
-                meta = parse_skill_metadata(item, skill_md)
-                meta["scope"] = "personal"
-                meta["modified_at"] = get_skill_modified_at(item_path, skill_md)
-                skills_list.append(meta)
+        # 兼容历史遗留的 .seed 布局：直接 os.listdir 会跳过点开头目录，导致
+        # 「文件都在、列表却为空」
+        for item, item_path in iter_personal_skill_dirs(skills_root):
+            skill_md = os.path.join(item_path, "SKILL.md")
+            meta = parse_skill_metadata(item, skill_md)
+            meta["scope"] = "personal"
+            meta["modified_at"] = get_skill_modified_at(item_path, skill_md)
+            skills_list.append(meta)
     except Exception as e:
         logger.error("[PersonalSkills] Failed to list skills: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

@@ -3969,7 +3969,12 @@ async def append_session_workspace_sandbox_to_system_prompt(
             os.path.basename(session_workdir),
         )
         logical_docs_dir = os.path.join(sandbox_logical_root, USER_DOCS_DIR_NAME)
-        if _resolve_docker_public_docs_source() is not None:
+        # K8s 适配器固定挂载 subPath docs（k8s_workspace.py 传 public_docs_mounted=True），
+        # 与目录清单 resource_catalog_tools 的判定保持一致；否则同一轮里提示词会说
+        # 「公共 docs 未挂载」而目录清单说已挂载，模型无所适从。
+        if effective_policy == SANDBOX_POLICY_K8S:
+            logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
+        elif _resolve_docker_public_docs_source() is not None:
             logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
     block = AgentServicePrompts.session_workspace_sandbox_block(
         session_workdir=session_workdir,
@@ -4235,7 +4240,7 @@ def _logicalize_docker_workspace_result(result: Any, host_root: str) -> Any:
     return result
 
 
-class _DockerLogicalWorkspaceNativeTool:
+class _SandboxLogicalWorkspaceNativeTool:
     """Map legacy ``/workspace`` inputs while preserving real output paths."""
 
     def __init__(
@@ -4832,7 +4837,7 @@ class _WorkspaceFileAccessNativeTool:
         return generator(self._map(tool_input))
 
 
-class _DockerSessionBashNativeTool:
+class _SandboxSessionBashNativeTool:
     """Keep Docker Bash's default cwd aligned with the current session."""
 
     def __init__(self, native_tool: Any, host_root: str, session_workdir: str) -> None:
@@ -4967,21 +4972,21 @@ class LazySandboxBashNativeTool:
                     ),
                 )
 
-            docker_host_root = (
+            sandbox_host_root = (
                 getattr(self.local_ws, "workspace_user_root", None)
                 if self.local_ws is not None
                 else None
             )
             if (
-                docker_host_root
+                sandbox_host_root
                 and getattr(real_ws, "_platform_sandbox_policy", None)
-                == SANDBOX_POLICY_DOCKER
+                in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
                 and self.local_ws is not None
                 and getattr(self.local_ws, "workdir", None)
             ):
-                sandbox_bash = _DockerSessionBashNativeTool(
+                sandbox_bash = _SandboxSessionBashNativeTool(
                     sandbox_bash,
-                    docker_host_root,
+                    sandbox_host_root,
                     self.local_ws.workdir,
                 )
             if getattr(sandbox_bash, "name", None) != self.name:
@@ -5059,21 +5064,27 @@ async def bind_configured_tools_to_workspace(
 
     sandbox_ws, local_ws = _normalize_workspace_pair(workspace)
     is_lazy = isinstance(sandbox_ws, LazySandboxWorkspaceProxy)
-    docker_host_root = None
+    sandbox_host_root = None
+    # 这是「沙箱工具是否改用宿主路径包装」的总开关。K8s 与 Docker 的沙箱内根同样是
+    # /workspace，且 workspace_user_root / file_tool_mount_mappings 两种策略都已备好；
+    # 若只判 Docker，K8s 下会丢两件事：Bash 默认 cwd 停在 /workspace（而非当前会话目录，
+    # 与提示词承诺不一致），以及绝对 Glob.pattern 不被翻译——只有
+    # _SandboxLogicalWorkspaceNativeTool 会改写 pattern，_WorkspaceFileAccessNativeTool
+    # 只改写 path。
     if (
         sandbox_ws is not None
         and getattr(sandbox_ws, "_platform_sandbox_policy", None)
-        == SANDBOX_POLICY_DOCKER
+        in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
         and local_ws is not None
     ):
-        docker_host_root = getattr(local_ws, "workspace_user_root", None)
-    docker_file_tool_mount_mappings = (
+        sandbox_host_root = getattr(local_ws, "workspace_user_root", None)
+    sandbox_file_tool_mount_mappings = (
         getattr(sandbox_ws, "_platform_sandbox_file_tool_mount_mappings", None)
         if sandbox_ws is not None
         else None
     )
 
-    file_access_root = docker_host_root
+    file_access_root = sandbox_host_root
     if file_access_root is None and local_ws is not None:
         file_access_root = getattr(local_ws, "workspace_user_root", None)
     if file_access_root is None and user_info is not None:
@@ -5171,13 +5182,13 @@ async def bind_configured_tools_to_workspace(
             except Exception:
                 pass
         if (
-            docker_host_root
+            sandbox_host_root
             and native_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES
         ):
-            workspace_tool = _DockerLogicalWorkspaceNativeTool(
+            workspace_tool = _SandboxLogicalWorkspaceNativeTool(
                 workspace_tool,
-                docker_host_root,
-                mount_mappings=docker_file_tool_mount_mappings,
+                sandbox_host_root,
+                mount_mappings=sandbox_file_tool_mount_mappings,
             )
         if native_name in DOCKER_WORKSPACE_FILE_TOOL_NAMES:
             if not file_access_root:
@@ -5188,18 +5199,18 @@ async def bind_configured_tools_to_workspace(
                 workspace_tool,
                 user_info=user_info,
                 workspace_root=file_access_root,
-                mount_mappings=docker_file_tool_mount_mappings,
+                mount_mappings=sandbox_file_tool_mount_mappings,
             )
         if (
-            docker_host_root
+            sandbox_host_root
             and native_name == "Bash"
             and not is_lazy
             and local_ws is not None
             and getattr(local_ws, "workdir", None)
         ):
-            workspace_tool = _DockerSessionBashNativeTool(
+            workspace_tool = _SandboxSessionBashNativeTool(
                 workspace_tool,
-                docker_host_root,
+                sandbox_host_root,
                 local_ws.workdir,
             )
         if (

@@ -1319,7 +1319,7 @@
         <SkillCreatedBanner
           :info="skillCreatedInfo"
           @mount="mountCreatedSkill"
-          @dismiss="skillCreatedInfo = null"
+          @dismiss="dismissCreatedSkill"
         />
       </div>
       <ChatInput
@@ -2465,7 +2465,11 @@ import {
 } from "@/constants/personalResources";
 import type { SavedReportOpenRequest } from "@/utils/savedReportOpenProtocol";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
-import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
+import {
+  createSkillNotifyGate,
+  parseLatestSkillCreatedMarker,
+  type SkillCreatedInfo,
+} from "@/utils/skillCreated";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import SessionResourceScopeBar from "@/components/embed/SessionResourceScopeBar.vue";
 import ResourceScopeModal from "@/components/embed/ResourceScopeModal.vue";
@@ -6880,6 +6884,10 @@ const activeColor = ref("#1677ff");
 
 // 技能工作流选择器
 const skillCreatedInfo = ref<SkillCreatedInfo | null>(null);
+// 「已创建个人技能」横幅的去重闸门：NANZI_SKILL_CREATED 标记会随消息历史长期存在，
+// 而下面的 watch 在每次 messages 变化（发消息 / 流式回复 / 刷新加载历史 / 切回会话）
+// 时都会重扫整段历史；不去重就会反复弹出，且用户关闭后立刻又出现。
+const skillNotifyGate = createSkillNotifyGate(() => conversationId.value);
 
 watch(
   () =>
@@ -6892,12 +6900,19 @@ watch(
       )
       .join("\n---\n"),
   (blob) => {
-    const info = parseSkillCreatedMarker(blob);
-    if (info && info.scope === "personal") {
-      skillCreatedInfo.value = info;
-    }
+    const info = parseLatestSkillCreatedMarker(blob);
+    if (!info || info.scope !== "personal") return;
+    if (!skillNotifyGate.shouldNotify(info.skill_id)) return;
+    skillCreatedInfo.value = info;
   },
 );
+
+const dismissCreatedSkill = () => {
+  if (skillCreatedInfo.value) {
+    skillNotifyGate.mark(skillCreatedInfo.value.skill_id);
+  }
+  skillCreatedInfo.value = null;
+};
 
 const mountCreatedSkill = () => {
   if (!skillCreatedInfo.value) return;

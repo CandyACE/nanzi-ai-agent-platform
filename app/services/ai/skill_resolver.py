@@ -81,47 +81,123 @@ def get_user_personal_skills_dir(user_info: Optional[Dict[str, Any]]) -> Optiona
         return None
 
 
-def _scan_skill_dir(skills_dir: str, scope: str) -> List[Dict[str, str]]:
-    """扫描单个技能根目录，返回带 scope 的 meta 列表。"""
+PERSONAL_SKILL_SEED_DIR_NAME = ".seed"
+
+
+def iter_personal_skill_dirs(personal_root: str) -> List[tuple[str, str]]:
+    """列出个人技能根下的 ``(skill_id, skill_dir)``，兼容 AgentScope 的 seed 布局。
+
+    历史背景：K8s 沙箱在补齐技能子挂载之前只挂载了整个用户工作区，AgentScope 的技能根
+    ``${workdir}/skills`` 恰好就是**个人技能源目录**；它 ``initialize()`` 时的
+    ``_migrate_skill_layout`` 会把平铺技能**搬移**（``shutil.move``）进
+    ``<root>/.seed/<skill_id>/``。之后所有「跳过点目录」的主机侧枚举（技能列表、个人技能
+    中心、工作台计数、发布快照……）就再也看不到这些技能——它们并未丢失，只是隐形了。
+
+    平台的规范布局仍是平铺 ``<root>/<skill_id>/``（新建技能也写在这里），所以这里
+    **平铺优先、``.seed`` 回退**；两处同名时以平铺那份为准。
+    """
+    if not personal_root or not os.path.isdir(personal_root):
+        return []
+    found: Dict[str, str] = {}
+    seed_dir = os.path.join(personal_root, PERSONAL_SKILL_SEED_DIR_NAME)
+    for base in (personal_root, seed_dir):
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for name in names:
+            if name.startswith(".") or not _validate_skill_id(name):
+                continue
+            skill_dir = os.path.join(base, name)
+            if not os.path.isdir(skill_dir):
+                continue
+            found.setdefault(name, skill_dir)
+    return sorted(found.items())
+
+
+def resolve_personal_skill_dir(personal_root: str, skill_id: str) -> Optional[str]:
+    """定位单个个人技能目录（平铺优先、``.seed`` 回退）；找不到返回 ``None``。
+
+    读/写端点都应经由本函数定位技能目录：否则对 ``.seed`` 里的存量技能，编辑动作会
+    在平铺位置**新建一份副本**，出现「同一技能两份」。
+    """
+    if not personal_root or not skill_id:
+        return None
+    for candidate in (
+        os.path.join(personal_root, skill_id),
+        os.path.join(personal_root, PERSONAL_SKILL_SEED_DIR_NAME, skill_id),
+    ):
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def _scan_skill_dir(
+    skills_dir: str,
+    scope: str,
+    *,
+    allow_seed: bool = False,
+) -> List[Dict[str, str]]:
+    """扫描单个技能根目录，返回带 scope 的 meta 列表。
+
+    ``allow_seed=True`` 时额外认 ``<root>/.seed/<skill_id>/``，**仅供个人技能源**使用
+    （见 ``iter_personal_skill_dirs``）。公共技能库由平台自己维护、布局规范，不接受 seed。
+    """
+    if allow_seed:
+        entries = iter_personal_skill_dirs(skills_dir)
+    else:
+        entries = []
+        if skills_dir and os.path.exists(skills_dir):
+            for item in sorted(os.listdir(skills_dir)):
+                if item.startswith("."):
+                    continue
+                item_path = os.path.join(skills_dir, item)
+                if os.path.isdir(item_path) and _validate_skill_id(item):
+                    entries.append((item, item_path))
+
     metas: List[Dict[str, str]] = []
-    if not skills_dir or not os.path.exists(skills_dir):
-        return metas
-    for item in sorted(os.listdir(skills_dir)):
-        if item.startswith("."):
-            continue
-        item_path = os.path.join(skills_dir, item)
-        if not os.path.isdir(item_path):
-            continue
-        if not _validate_skill_id(item):
-            continue
+    for skill_id, item_path in entries:
         skill_md_path = os.path.join(item_path, "SKILL.md")
-        meta = _parse_skill_frontmatter(item, skill_md_path)
+        meta = _parse_skill_frontmatter(skill_id, skill_md_path)
         meta["skill_md_path"] = skill_md_path
         meta["scope"] = scope
         metas.append(meta)
     return metas
 
 
-def _skill_dir_fingerprint(skills_dir: str) -> tuple[Any, ...]:
-    """生成技能目录轻量指纹，用于检测元数据文件变化。"""
+def _skill_dir_fingerprint(
+    skills_dir: str,
+    *,
+    allow_seed: bool = False,
+) -> tuple[Any, ...]:
+    """生成技能目录轻量指纹，用于检测元数据文件变化。
+
+    ``allow_seed`` 必须与 ``_scan_skill_dir`` 保持一致，否则 seed 布局下的技能变更
+    （或技能被搬进 ``.seed``）不会让缓存失效。
+    """
     abs_dir = os.path.abspath(os.fspath(skills_dir))
     try:
         root_stat = os.stat(abs_dir)
     except OSError:
         return (abs_dir, None, ())
 
-    entries: list[tuple[Any, ...]] = []
-    try:
-        names = sorted(os.listdir(abs_dir))
-    except OSError:
-        return (abs_dir, root_stat.st_mtime_ns, root_stat.st_size, ())
+    if allow_seed:
+        candidates = iter_personal_skill_dirs(abs_dir)
+    else:
+        try:
+            names = sorted(os.listdir(abs_dir))
+        except OSError:
+            return (abs_dir, root_stat.st_mtime_ns, root_stat.st_size, ())
+        candidates = [
+            (item, os.path.join(abs_dir, item))
+            for item in names
+            if not item.startswith(".")
+            and _validate_skill_id(item)
+            and os.path.isdir(os.path.join(abs_dir, item))
+        ]
 
-    for item in names:
-        if item.startswith("."):
-            continue
-        item_path = os.path.join(abs_dir, item)
-        if not os.path.isdir(item_path) or not _validate_skill_id(item):
-            continue
+    entries: list[tuple[Any, ...]] = []
+    for item, item_path in candidates:
         skill_md_path = os.path.join(item_path, "SKILL.md")
         try:
             stat = os.stat(skill_md_path)
@@ -135,13 +211,18 @@ def _copy_skill_metas(metas: tuple[Dict[str, str], ...]) -> List[Dict[str, str]]
     return [dict(meta) for meta in metas]
 
 
-def _scan_skill_dir_cached(skills_dir: str, scope: str) -> List[Dict[str, str]]:
+def _scan_skill_dir_cached(
+    skills_dir: str,
+    scope: str,
+    *,
+    allow_seed: bool = False,
+) -> List[Dict[str, str]]:
     if not skills_dir:
         return []
 
     abs_dir = os.path.abspath(os.fspath(skills_dir))
-    fingerprint = _skill_dir_fingerprint(abs_dir)
-    cache_key = (abs_dir, scope, fingerprint)
+    fingerprint = _skill_dir_fingerprint(abs_dir, allow_seed=allow_seed)
+    cache_key = (abs_dir, scope, allow_seed, fingerprint)
     now = time.monotonic()
     with _skill_meta_cache_lock:
         cached = _skill_meta_cache.get(cache_key)
@@ -151,7 +232,7 @@ def _scan_skill_dir_cached(skills_dir: str, scope: str) -> List[Dict[str, str]]:
         if cached:
             _skill_meta_cache.pop(cache_key, None)
 
-    metas = _scan_skill_dir(abs_dir, scope)
+    metas = _scan_skill_dir(abs_dir, scope, allow_seed=allow_seed)
     frozen_metas = tuple(dict(meta) for meta in metas)
     with _skill_meta_cache_lock:
         _skill_meta_cache[cache_key] = (now, frozen_metas)
@@ -204,7 +285,10 @@ def list_skill_metas(
     personal_metas: List[Dict[str, str]] = []
     personal_dir = get_user_personal_skills_dir(user_info)
     if personal_dir:
-        personal_metas = _scan_skill_dir_cached(personal_dir, SCOPE_PERSONAL)
+        # 个人技能源需要兼容历史遗留的 .seed 布局（见 iter_personal_skill_dirs）
+        personal_metas = _scan_skill_dir_cached(
+            personal_dir, SCOPE_PERSONAL, allow_seed=True
+        )
 
     # 合并：个人技能优先（同 ID 覆盖全局）
     merged: Dict[str, Dict[str, str]] = {m["id"]: m for m in global_metas}

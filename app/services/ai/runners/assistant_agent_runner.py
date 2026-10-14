@@ -2361,11 +2361,31 @@ class AssistantAgentRunner(BaseExecutor):
                     self.conversation_id,
                     exc,
                 )
-                exc = K8sSandboxUnavailableError(
-                    "sandbox workspace init timeout",
-                    reason_code="k8s_workspace_init_timeout",
-                    user_message="沙箱启动超时（可能镜像拉取或集群调度较慢），已按沙箱不可用处理，可稍后重试。",
+                # 按当前生效的策略选择异常类型：此前一律包成 K8s 异常，导致 Docker
+                # 超时被反向标成 K8s（日志与降级原因误导）。
+                from app.services.config_service import (
+                    ConfigService,
+                    resolve_effective_sandbox_policy,
                 )
+
+                try:
+                    timeout_policy = resolve_effective_sandbox_policy(
+                        await ConfigService.get("sandbox_policy", "local"), "local"
+                    )
+                except Exception:
+                    timeout_policy = "k8s"
+                if timeout_policy == "docker":
+                    exc = DockerSandboxUnavailableError(
+                        "sandbox workspace init timeout",
+                        reason_code="docker_workspace_start_failed",
+                        user_message="沙箱启动超时（可能镜像构建或拉取较慢），已按沙箱不可用处理，可稍后重试。",
+                    )
+                else:
+                    exc = K8sSandboxUnavailableError(
+                        "sandbox workspace init timeout",
+                        reason_code="k8s_workspace_init_timeout",
+                        user_message="沙箱启动超时（可能镜像拉取或集群调度较慢），已按沙箱不可用处理，可稍后重试。",
+                    )
             logger.warning(
                 "[agent] Sandbox workspace unavailable (conversation=%s); degrading to host local workspace, Bash disabled: %s",
                 self.conversation_id,

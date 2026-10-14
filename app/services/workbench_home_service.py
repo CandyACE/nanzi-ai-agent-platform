@@ -613,16 +613,16 @@ async def _count_data_portal_reports(
 def _count_personal_skills(user: Mapping[str, Any]) -> int:
     import os
 
-    from app.services.ai.skill_resolver import get_user_personal_skills_dir
+    from app.services.ai.skill_resolver import (
+        get_user_personal_skills_dir,
+        iter_personal_skill_dirs,
+    )
 
     skills_dir = get_user_personal_skills_dir(dict(user))
     if not skills_dir or not os.path.isdir(skills_dir):
         return 0
-    return sum(
-        1
-        for name in os.listdir(skills_dir)
-        if not name.startswith(".") and os.path.isdir(os.path.join(skills_dir, name))
-    )
+    # 兼容历史遗留的 .seed 布局，否则计数恒为 0
+    return len(iter_personal_skill_dirs(skills_dir))
 
 
 async def _count_personal_mcp(db: AsyncSession, user_id: int) -> int:

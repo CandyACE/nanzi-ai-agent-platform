@@ -410,3 +410,154 @@ async def test_bash_sandbox_parent_link_middleware_seeds_only_bash():
     finally:
         current_bash_tool_parent_id.reset(reset)
 
+
+
+@pytest.mark.asyncio
+async def test_lazy_k8s_bash_gets_session_cwd_wrapper(tmp_path, monkeypatch):
+    """K8s 懒加载 Bash 必须与 Docker 一样套上「会话 cwd」包装。
+
+    历史问题：该包装（以及 ``bind_configured_tools_to_workspace`` 里取宿主根的总开关）
+    只判 ``policy == docker``，于是 K8s 沙箱里 Bash 的默认 cwd 停在 ``/workspace``，
+    而提示词承诺的是当前会话目录；相对路径写入会落到工作区根。
+    """
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value=SANDBOX_POLICY_K8S),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        AsyncMock(return_value=str(tmp_path)),
+    )
+
+    fake_real_ws = MagicMock()
+    fake_real_ws.is_alive = True
+    fake_real_ws._platform_sandbox_policy = SANDBOX_POLICY_K8S
+
+    mock_bash = AsyncMock(return_value="hello from k8s sandbox")
+    mock_bash.name = "Bash"
+    fake_mcp_client = MagicMock()
+    fake_mcp_client.name = "sandbox"
+    fake_mcp_client.is_connected = True
+    fake_mcp_client.get_tool.return_value = mock_bash
+    fake_real_ws.list_mcps.return_value = [fake_mcp_client]
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace._acquire_k8s_workspace",
+        AsyncMock(return_value=(fake_real_ws, "fake_k8s_cache_key")),
+    )
+
+    event_queue = asyncio.Queue()
+    set_agent_context(
+        AgentContext(
+            agent_id="test_agent",
+            agent_name="Tester",
+            user_id=101,
+            conversation_id="conv_k8s_lazy",
+            event_queue=event_queue,
+        )
+    )
+
+    pair = await get_local_workspace(
+        user_id="101",
+        conversation_id="conv_k8s_lazy",
+        user_name="tester",
+        user_info={"user_id": 101, "user_name": "tester"},
+        lazy_sandbox=True,
+    )
+    sandbox_ws, local_ws = pair
+    assert isinstance(sandbox_ws, LazySandboxWorkspaceProxy)
+    # K8s 也必须解析出宿主根，否则包装条件永远不成立（对应 total switch 的放开）
+    assert getattr(local_ws, "workspace_user_root", None)
+
+    bash_spec = RuntimeToolSpec(
+        name="Bash",
+        description="Run bash command",
+        parameters_schema={"type": "object", "properties": {"command": {"type": "string"}}},
+        source_type="system",
+        callable=AsyncMock(),
+    )
+    bound = await bind_configured_tools_to_workspace(
+        (sandbox_ws, local_ws),
+        [bash_spec],
+        user_info={"user_id": 101, "user_name": "tester"},
+    )
+    res = await bound[0].callable(command="echo hi")
+    assert "hello from k8s sandbox" in str(res)
+
+    from app.services.ai.runtime.agentscope.workspace import (
+        _SandboxSessionBashNativeTool,
+    )
+
+    proxy_bash = bound[0].native_tool
+    assert isinstance(proxy_bash, LazySandboxBashNativeTool)
+    assert isinstance(proxy_bash._real_tool, _SandboxSessionBashNativeTool), (
+        "K8s 懒加载 Bash 必须套上会话 cwd 包装，否则默认 cwd 停在 /workspace"
+    )
+    expected_rel = os.path.relpath(local_ws.workdir, local_ws.workspace_user_root)
+    # 未显式指定 cwd 时，默认落到当前会话目录
+    assert proxy_bash._real_tool._default_cwd() == expected_rel
+    assert proxy_bash._real_tool._map_cwd("") == expected_rel
+    # 显式传入沙箱逻辑根 /workspace 时映射为沙箱根相对路径 "."
+    assert proxy_bash._real_tool._map_cwd("/workspace") == "."
+
+
+@pytest.mark.asyncio
+async def test_bind_configured_tools_wraps_k8s_sandbox_bash(tmp_path, monkeypatch):
+    """K8s（非懒加载）下 Bash 也必须走宿主路径包装。
+
+    覆盖 ``bind_configured_tools_to_workspace`` 里取宿主根的总开关：只判 docker 时，
+    K8s 会丢两件事——Bash 默认 cwd 停在 ``/workspace``（而不是当前会话目录），以及绝对
+    ``Glob.pattern`` 不被翻译（只有 ``_SandboxLogicalWorkspaceNativeTool`` 会改 pattern，
+    ``_WorkspaceFileAccessNativeTool`` 只改 path）。
+    """
+    from app.services.ai.runtime.agentscope.workspace import (
+        _SandboxSessionBashNativeTool,
+    )
+    from app.services.ai.tools.registry import ToolRegistry
+
+    # 用真实 LocalWorkspace 提供 Read/Write/Glob/Grep，再手动补上只有沙箱策略才会
+    # 设置的 workspace_user_root（对应 workspace.py 里放开到 K8s 的那处赋值）
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="local"),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        AsyncMock(return_value=str(tmp_path)),
+    )
+    _, local_ws = await get_local_workspace(
+        user_id=101,
+        conversation_id="conv_k8s_eager",
+        user_name="tester",
+        user_info={"user_id": 101, "user_name": "tester"},
+    )
+    user_root = tmp_path / "tester__101"
+    local_ws.workspace_user_root = str(user_root)
+
+    fake_k8s_ws = MagicMock()
+    fake_k8s_ws.is_alive = True
+    fake_k8s_ws._platform_sandbox_policy = SANDBOX_POLICY_K8S
+    fake_k8s_ws._platform_sandbox_file_tool_mount_mappings = {}
+
+    mock_bash = AsyncMock(return_value="ok from k8s")
+    mock_bash.name = "Bash"
+    mock_client = MagicMock()
+    mock_client.name = "sandbox"
+    mock_client.is_connected = True
+    mock_client.get_tool.return_value = mock_bash
+    fake_k8s_ws.list_mcps.return_value = [mock_client]
+
+    specs = await ToolRegistry.get_runtime_tools(["exec_command"])
+    bound = await bind_configured_tools_to_workspace(
+        (fake_k8s_ws, local_ws),
+        specs,
+        user_info={"user_id": 101, "user_name": "tester"},
+    )
+    by_name = {spec.name: spec for spec in bound}
+
+    assert isinstance(by_name["Bash"].native_tool, _SandboxSessionBashNativeTool), (
+        "K8s 非懒加载 Bash 必须套上会话 cwd 包装"
+    )
+    assert by_name["Bash"].native_tool._default_cwd() == os.path.relpath(
+        local_ws.workdir, str(user_root)
+    )

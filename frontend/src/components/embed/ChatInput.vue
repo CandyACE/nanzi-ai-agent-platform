@@ -37,6 +37,7 @@ import {
   PowerIcon,
   PuzzlePieceIcon,
   ServerIcon,
+  ServerStackIcon,
   XMarkIcon,
 } from "@heroicons/vue/24/outline";
 
@@ -213,6 +214,7 @@ const sandboxPolicyLabel = computed(() => {
   }
   const labels: Record<string, string> = {
     docker: "docker（Docker 容器）",
+    k8s: "k8s（Kubernetes 沙箱）",
     e2b: "e2b（E2B 云端）",
     ssh: "ssh（SSH 远程主机）",
   };
@@ -224,6 +226,7 @@ const sandboxPolicyIcon = computed(() => {
   const runtimeEnv = String(props.contextUsage?.sandbox_runtime_env || "").trim().toLowerCase();
   if (policy === "e2b") return CloudIcon;
   if (policy === "ssh") return ServerIcon;
+  if (policy === "k8s") return ServerStackIcon;
   if (policy === "docker" || (policy === "local" && runtimeEnv === "docker")) {
     return CubeIcon;
   }
@@ -235,6 +238,7 @@ const sandboxPolicyBadgeClass = computed(() => {
   const runtimeEnv = String(props.contextUsage?.sandbox_runtime_env || "").trim().toLowerCase();
   if (policy === "e2b") return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800/60 dark:bg-violet-950/30 dark:text-violet-300";
   if (policy === "ssh") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800/60 dark:bg-sky-950/30 dark:text-sky-300";
+  if (policy === "k8s") return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-300";
   if (policy === "docker" || (policy === "local" && runtimeEnv === "docker")) {
     return "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800/60 dark:bg-indigo-950/30 dark:text-indigo-300";
   }

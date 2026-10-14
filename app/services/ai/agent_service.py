@@ -793,6 +793,7 @@ def _build_workspace_sandbox_log(
     """构建沙箱工作区准备日志项。"""
     policy_labels = {
         "docker": "Docker 容器",
+        "k8s": "Kubernetes 沙箱",
         "local": "本地环境",
         "e2b": "E2B 沙箱",
         "ssh": "SSH 远程沙箱",
@@ -2120,7 +2121,7 @@ class AgentService:
                     conversation_id,
                     err,
                 )
-                is_sandbox = policy in ("docker", "e2b", "ssh")
+                is_sandbox = policy in ("docker", "k8s", "e2b", "ssh")
                 return _build_workspace_sandbox_log(
                     policy=policy,
                     is_sandbox=is_sandbox,
