@@ -10,6 +10,7 @@ import fnmatch
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.code_execution_service import run_shell_command_capture
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
+from app.utils.skill_metadata import is_skill_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ async def list_available_skills() -> str:
         )
         skills = []
         for meta in metas:
-            if meta.get("enabled", "true") == "false":
+            if not is_skill_enabled(meta):
                 continue
             skills.append(
                 {
@@ -221,7 +222,7 @@ async def read_skill_instruction(skill_id: str) -> str:
             (
                 m
                 for m in metas
-                if m.get("id") == safe_skill_id and m.get("enabled", "true") != "false"
+                if m.get("id") == safe_skill_id and is_skill_enabled(m)
             ),
             None,
         )
@@ -713,11 +714,15 @@ def create_skills(
     description: str,
     skill_md_content: str,
     scope: str = "personal",
+    overwrite: bool = False,
 ) -> str:
     """
     根据当前的聊天会话内容与用户意图，按照 Anthropic Skills 生态规范在 skills 目录下物理创建或初始化一个智能体技能（Skill）。
     这会创建一个技能文件夹，并强制写入包含 Frontmatter 触发定义的 SKILL.md 规范守则文件。
-    
+
+    如果该技能 ID **已经存在**，默认什么都不会写入，只返回提示；只有在用户明确同意覆盖后，
+    才带 overwrite=true 重新调用。这样避免「以为在新建、实际把已有技能整份替换掉」。
+
     Args:
         skill_id: 技能唯一英文标识 (如 translate-helper)，仅支持英文、数字、中划线及下划线。
         name: 技能的人类可读名称 (如 多语言智能翻译官)。
@@ -725,6 +730,9 @@ def create_skills(
         skill_md_content: 该技能核心 SKILL.md 文件的完整 Markdown 文本。
                           必须符合规范：开头需包含 YAML Frontmatter 描述（以 --- 包裹，内含 name: <名称> 与 description: <描述> 属性），随后为 imperative 操作指令。
         scope: 技能的共享范围：'personal'（个人独享，默认）或 'global'（平台全局，仅管理员可创建）。
+        overwrite: 是否允许覆盖同名已存在的技能。默认 false。为 false 且技能已存在时，
+                   本工具不会修改磁盘上的任何内容，而是返回 NANZI_SKILL_EXISTS 提示；
+                   必须先向用户确认「确实要整份替换现有技能」，再带 overwrite=true 重试。
     """
     try:
         import re
@@ -771,17 +779,45 @@ def create_skills(
         
         # 安全防御拦截
         validate_safe_path(skill_path)
-        
-        os.makedirs(skill_path, exist_ok=True)
+
         skill_md_path = os.path.join(skill_path, "SKILL.md")
-        
+        # 同名技能已存在时默认拒写。此前这里是静默 upsert：makedirs(exist_ok=True) 后直接
+        # 整份覆盖，却返回「创建成功」、前端弹「已创建个人技能」横幅——用户以为新增了一个
+        # 技能，实际把已有技能（可能已被发布、已被智能体挂载）的正文清空替换了。
+        already_exists = os.path.exists(skill_md_path)
+        if already_exists and not overwrite:
+            return (
+                f"技能 {skill_id} 已存在（{skill_md_path}），本次**未做任何修改**。\n"
+                "如果用户确实要用新内容整份替换它，请在获得用户明确确认后，"
+                "带 overwrite=true 重新调用本工具；如果只是想补充或修改其中部分内容，"
+                "请改用技能文件编辑能力，不要整份覆盖。\n"
+                + "NANZI_SKILL_EXISTS:"
+                + json.dumps(
+                    {
+                        "skill_id": skill_id,
+                        "scope": resolved_scope,
+                        "name": name or skill_id,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+
+        os.makedirs(skill_path, exist_ok=True)
+
         # 写入物理磁盘
         with open(skill_md_path, "w", encoding="utf-8") as f:
             f.write(skill_md_content)
-            
+
         scope_desc = "平台全局" if resolved_scope == "global" else "个人专属"
+        if already_exists:
+            action_desc = "已覆盖更新"
+            marker_name = "NANZI_SKILL_UPDATED"
+        else:
+            action_desc = "创建成功"
+            marker_name = "NANZI_SKILL_CREATED"
         marker = (
-            "NANZI_SKILL_CREATED:"
+            marker_name + ":"
             + json.dumps(
                 {
                     "skill_id": skill_id,
@@ -793,7 +829,7 @@ def create_skills(
             )
         )
         return (
-            f"成功：{scope_desc}技能 {skill_id} 创建成功。"
+            f"成功：{scope_desc}技能 {skill_id} {action_desc}。"
             f"SKILL.md 规范文件已物理写入路径 {skill_md_path}。\n{marker}"
         )
     except Exception as e:

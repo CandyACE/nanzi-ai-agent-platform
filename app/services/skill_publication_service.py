@@ -209,6 +209,10 @@ def _write_platform_metadata(
     metadata = [
         f"platform_skill_id: {platform_skill_id}",
         f"publication_version: {int(version_number)}",
+        # 审核通过是平台有意的「上架」动作，落库必须可用。此前原样保留源技能的
+        # enabled，于是作者若禁用了自己的私有副本，发布出来的平台技能默认禁用：
+        # 审核双方都看到「已通过并发布」，运行时却谁都加载不到。
+        "enabled: true",
     ]
     if publication_id:
         metadata.append(f"publication_id: {publication_id}")
@@ -217,7 +221,9 @@ def _write_platform_metadata(
         frontmatter = [
             line
             for line in match.group(1).splitlines()
-            if not line.lower().startswith(("platform_skill_id:", "publication_version:", "publication_id:"))
+            if not line.lower().startswith(
+                ("platform_skill_id:", "publication_version:", "publication_id:", "enabled:")
+            )
         ]
         frontmatter_text = "\n".join([*frontmatter, *metadata])
         replacement = f"---\n{frontmatter_text}\n---\n"
@@ -225,6 +231,63 @@ def _write_platform_metadata(
     else:
         metadata_text = "\n".join(metadata)
         skill_md.write_text(f"---\n{metadata_text}\n---\n\n{content}", encoding="utf-8")
+
+
+class SnapshotFileError(ValueError):
+    """审核快照内文件访问被拒绝（不存在、非文本、过大或越界）。"""
+
+
+#: 审核预览允许的文本扩展名（可执行脚本同样要能看，否则等于没审）
+SNAPSHOT_PREVIEW_EXTENSIONS = frozenset(
+    {
+        ".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+        ".py", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".sql",
+        ".csv", ".tsv", ".env", ".html", ".htm", ".css", ".xml", ".rst",
+    }
+)
+
+#: 单个预览文件的大小上限
+SNAPSHOT_PREVIEW_MAX_BYTES = 1024 * 1024
+
+
+def resolve_snapshot_file(snapshot_root: str, relative_path: str) -> str:
+    """把审核快照内的相对路径解析为**确定落在快照目录内**的真实文件路径。
+
+    审核面板需要逐个打开包内文件（``scripts/*.py`` 这类可执行内容也在其中），因此
+    这里必须自己把关：``realpath`` 解析完成后再比对前缀，软链接指到快照外也会被拒；
+    同时限制为文本扩展名与单文件大小，避免把快照当任意文件读取器或 OOM 入口。
+
+    raises SnapshotFileError: 路径越界、文件不存在、非文本或超出大小上限。
+    """
+    if not snapshot_root or not os.path.isdir(snapshot_root):
+        raise SnapshotFileError("发布快照不存在或已被清理")
+
+    root = os.path.realpath(snapshot_root)
+    raw = str(relative_path or "").strip()
+    if not raw:
+        raise SnapshotFileError("缺少文件路径")
+    if os.path.isabs(raw):
+        raise SnapshotFileError("只允许快照内的相对路径")
+
+    candidate = os.path.realpath(os.path.join(root, raw))
+    if candidate != root and not candidate.startswith(root + os.sep):
+        raise SnapshotFileError("非法的文件路径")
+    if not os.path.isfile(candidate):
+        raise SnapshotFileError("文件不存在")
+
+    _, ext = os.path.splitext(candidate.lower())
+    if ext not in SNAPSHOT_PREVIEW_EXTENSIONS:
+        raise SnapshotFileError("该文件类型不支持在线预览")
+    if os.path.getsize(candidate) > SNAPSHOT_PREVIEW_MAX_BYTES:
+        raise SnapshotFileError("单个文件超出 1MB 预览上限")
+    return candidate
+
+
+def read_snapshot_text_file(snapshot_root: str, relative_path: str) -> str:
+    """按 :func:`resolve_snapshot_file` 的约束读取快照内文本文件内容。"""
+    candidate = resolve_snapshot_file(snapshot_root, relative_path)
+    with open(candidate, "r", encoding="utf-8", errors="replace") as handle:
+        return handle.read()
 
 
 def materialize_snapshot(

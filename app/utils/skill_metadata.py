@@ -41,6 +41,9 @@ def parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> Dict[str, str]
     try:
         with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(8192)
+        # 容忍 UTF-8 BOM：zip 导入不会剥掉它，而 ^--- 匹配不到 BOM 开头的文件，会让
+        # enabled 静默回落成 "true"（技能永远显示启用）。
+        content = content.lstrip("\ufeff")
         match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
         if match:
             for line in match.group(1).splitlines():
@@ -59,9 +62,12 @@ def toggle_skill_enabled_in_file(skill_md_path: str, enabled: bool) -> bool:
     if not os.path.exists(skill_md_path):
         return False
     try:
-        with open(skill_md_path, "r", encoding="utf-8") as f:
+        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-        
+        # 与 parse_skill_frontmatter 同样的 BOM 容忍：这里若匹配不到 frontmatter 会
+        # 直接 return False，调用方（toggle 端点）就把「禁不掉」报成 500。
+        content = content.lstrip("\ufeff")
+
         match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
         if match:
             yaml_block = match.group(1)

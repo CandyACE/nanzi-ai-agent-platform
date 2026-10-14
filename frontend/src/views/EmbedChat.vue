@@ -6902,14 +6902,14 @@ watch(
   (blob) => {
     const info = parseLatestSkillCreatedMarker(blob);
     if (!info || info.scope !== "personal") return;
-    if (!skillNotifyGate.shouldNotify(info.skill_id)) return;
+    if (!skillNotifyGate.shouldNotify(info.skill_id, info.action)) return;
     skillCreatedInfo.value = info;
   },
 );
 
 const dismissCreatedSkill = () => {
   if (skillCreatedInfo.value) {
-    skillNotifyGate.mark(skillCreatedInfo.value.skill_id);
+    skillNotifyGate.mark(skillCreatedInfo.value.skill_id, skillCreatedInfo.value.action);
   }
   skillCreatedInfo.value = null;
 };

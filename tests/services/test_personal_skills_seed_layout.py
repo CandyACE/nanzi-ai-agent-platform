@@ -344,8 +344,53 @@ def test_agent_scoped_personal_skill_metas_reads_seeded_skill(tmp_path, monkeypa
     assert [m["id"] for m in metas] == ["seed-skill"]
 
 
+def test_create_skills_refuses_silent_overwrite_of_seeded_skill(tmp_path, monkeypatch):
+    """默认不得覆盖 ``.seed`` 里的同名技能，也不得在平铺处再造一份副本。
+
+    覆盖语义在第三轮 review 后收紧：``create_skills`` 原来是静默 upsert（直接整份覆盖
+    却回报「创建成功」），现在必须显式 ``overwrite=true`` 才写盘。这里验证「被拒」与
+    「没有副产物」两件事同时成立——被拒之后如果跑去平铺位置新建，反而更糟。
+    """
+    from app.services.ai import skill_resolver
+    from app.services.ai.tools.system_executive_tools import create_skills
+    from app.utils.context import current_user_info
+
+    personal_root = tmp_path / "u1" / "skills"
+    seeded = _write_skill(personal_root, "seed-skill", seed=True, body="old-body")
+    monkeypatch.setattr(
+        skill_resolver,
+        "get_user_personal_skills_dir",
+        lambda user_info=None: str(personal_root),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.tools.system_executive_tools.validate_safe_path",
+        lambda path: path,
+    )
+
+    token = current_user_info.set({"user_id": "u1", "user_name": "u1", "role": "user"})
+    try:
+        result = create_skills.invoke(
+            {
+                "skill_id": "seed-skill",
+                "name": "Seed Skill",
+                "description": "d",
+                "skill_md_content": "# 新内容",
+                "scope": "personal",
+            }
+        )
+    finally:
+        current_user_info.reset(token)
+
+    assert "NANZI_SKILL_EXISTS:" in result
+    assert "NANZI_SKILL_CREATED:" not in result
+    # 原内容必须原样保留
+    assert "old-body" in (seeded / "SKILL.md").read_text(encoding="utf-8")
+    assert "新内容" not in (seeded / "SKILL.md").read_text(encoding="utf-8")
+    assert not (personal_root / "seed-skill").exists(), "不得在平铺位置再造一份副本"
+
+
 def test_create_skills_updates_seeded_skill_in_place(tmp_path, monkeypatch):
-    """同名技能已存在于 ``.seed`` 时必须就地更新，不得在平铺处再造一份副本。"""
+    """显式 ``overwrite=true`` 时，同名 ``.seed`` 技能必须就地更新，不得另造副本。"""
     from app.services.ai import skill_resolver
     from app.services.ai.tools.system_executive_tools import create_skills
     from app.utils.context import current_user_info
@@ -377,12 +422,13 @@ def test_create_skills_updates_seeded_skill_in_place(tmp_path, monkeypatch):
                 "description": "d",
                 "skill_md_content": "# 新内容",
                 "scope": "personal",
+                "overwrite": True,
             }
         )
     finally:
         current_user_info.reset(token)
 
-    assert "错误" not in result
+    assert "NANZI_SKILL_UPDATED:" in result
     assert "新内容" in (seeded / "SKILL.md").read_text(encoding="utf-8")
     assert not (personal_root / "seed-skill").exists(), "不得在平铺位置再造一份副本"
 

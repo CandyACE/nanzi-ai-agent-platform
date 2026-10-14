@@ -300,6 +300,71 @@ class SkillInjector:
         }
 
     @classmethod
+    def drop_disabled_skill_items(cls, items: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """丢弃 frontmatter 里 ``enabled`` 判定为禁用的挂载项。
+
+        口径统一走 :func:`app.utils.skill_metadata.is_skill_enabled`：此前挂载这条路
+        完全不看 enabled，只拦 forbidden，于是「管理页显示已禁用、挂载后照样整份注入」。
+        取不到元数据时按**启用**处理——保守方向：不因读盘失败而误丢用户显式挂载的技能。
+        """
+        from app.utils.skill_metadata import is_skill_enabled
+
+        kept: List[Dict[str, Any]] = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                kept.append(item)
+                continue
+            skill_id = str(item.get("url") or "").strip()
+            if not skill_id:
+                kept.append(item)
+                continue
+            meta = item.get("skillMeta") or item.get("skill_meta")
+            if not isinstance(meta, dict) or "enabled" not in meta:
+                meta = cls._read_skill_meta_for_mount(item, skill_id)
+            if not is_skill_enabled(meta):
+                logger.warning(
+                    "[Skills] 技能 %s 已被禁用（enabled=false），本轮回合不再挂载", skill_id
+                )
+                continue
+            kept.append(item)
+        return kept
+
+    @staticmethod
+    def _read_skill_meta_for_mount(item: Dict[str, Any], skill_id: str) -> Dict[str, Any]:
+        """为挂载项读取磁盘 frontmatter（个人技能优先，其次公共技能库），失败返回空字典。"""
+        from app.utils.skill_metadata import parse_skill_frontmatter
+
+        scope = str(item.get("scope") or "").strip().lower()
+        candidates: List[str] = []
+        if scope == "personal":
+            try:
+                from app.core.context import current_user_info
+                from app.services.ai.skill_resolver import (
+                    get_user_personal_skills_dir,
+                    resolve_personal_skill_dir,
+                )
+
+                personal_dir = get_user_personal_skills_dir(current_user_info.get())
+                if personal_dir:
+                    resolved = resolve_personal_skill_dir(personal_dir, skill_id)
+                    candidates.append(
+                        os.path.join(
+                            resolved or os.path.join(personal_dir, skill_id), "SKILL.md"
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[Skills] 读取个人技能元数据失败 %s: %s", skill_id, exc)
+        else:
+            candidates.append(os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md"))
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                try:
+                    return parse_skill_frontmatter(skill_id, candidate)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("[Skills] 解析技能元数据失败 %s: %s", skill_id, exc)
+        return {}
+
+    @classmethod
     async def inject_skills(
         cls,
         *,
@@ -349,6 +414,11 @@ class SkillInjector:
         forbidden_skill_ids = await get_forbidden_skill_ids()
         active_skills = drop_forbidden_skill_items(active_skills, forbidden_skill_ids)
 
+        # enabled=false 在这条路上也必须拦。显式挂载（输入框技能 chip）与会话固定资源
+        # （resource_scope.skills，服务端持久化、跨轮生效）都不经过扫描侧的门禁：
+        # 少了这一道，「管理页点禁用」对已挂载/已固定的会话完全无效，正文照旧整份注入。
+        active_skills = cls.drop_disabled_skill_items(active_skills)
+
         mounted_skill_ids = {s.get("url") for s in active_skills if s.get("url")}
         skills_injection = []
         full_load_policy = await cls.resolve_skill_full_load_policy()
@@ -386,8 +456,7 @@ class SkillInjector:
                 if skill_scope == "personal":
                     personal_dir = get_user_personal_skills_dir(user_info)
                     if personal_dir:
-                        # 兼容历史遗留的 .seed 布局：否则个人技能正文会回退去公共
-                        # 技能库找同 ID 文件，找不到就注入空内容
+                        # 兼容历史遗留的 .seed 布局：否则个人技能正文读不到。
                         from app.services.ai.skill_resolver import resolve_personal_skill_dir
 
                         resolved_dir = resolve_personal_skill_dir(personal_dir, skill_id)
@@ -397,7 +466,14 @@ class SkillInjector:
                                 "SKILL.md",
                             )
                         )
-                candidate_paths.append(os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md"))
+                else:
+                    # 只有非个人技能才允许落到公共技能库。此前两者共用一条候选链，于是
+                    # 「个人技能目录里没有 SKILL.md（幽灵/上传中断/被并发删除）而公共库
+                    # 恰有同 ID」时，会把**公共**技能正文配着个人技能的名字注入进去，
+                    # 模型按错误的技能执行——宁可注入不到，也不能张冠李戴。
+                    candidate_paths.append(
+                        os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")
+                    )
 
                 skill_md_path = next(
                     (p for p in candidate_paths if os.path.exists(p)), candidate_paths[-1]

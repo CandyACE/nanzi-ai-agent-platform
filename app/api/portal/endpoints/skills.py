@@ -2,11 +2,14 @@ import os
 import shutil
 import logging
 import re
+import io
+import tempfile
+import uuid
 import zipfile
 import tarfile
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Literal
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,12 +17,15 @@ from app.core.config import settings
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
 from app.services.ai.agent_manager import AgentManagerService
+from app.services.skill_rename_service import SkillRenameError, rename_skill
 from app.services.skill_publication_service import (
     PublicationConflictError,
     PublicationNotFoundError,
+    SnapshotFileError,
     approve_publication,
     get_publication_version,
     list_pending_publications,
+    read_snapshot_text_file,
     reject_publication,
 )
 
@@ -60,6 +66,10 @@ class FileEditRequest(BaseModel):
     path: str
     content: str
 
+class SkillRenameRequest(BaseModel):
+    new_skill_id: str
+
+
 class SkillAssetCreateRequest(BaseModel):
     path: str
     type: Literal["file", "folder"]
@@ -74,23 +84,40 @@ EDITABLE_TEXT_EXTENSIONS = {
     ".ini", ".conf", ".sql", ".sh",
 }
 
-_RESERVED_SKILL_IDS = frozenset({"personal"})
+#: 技能 ID 白名单。必须与运行时判定（skill_resolver._validate_skill_id、
+#: skill_publication_service._validate_skill_id）逐字一致：运行时按这个正则过滤扫描结果，
+#: 放行正则之外的名字只会造出「管理页看得见、模型永远看不到」的幽灵技能。
+#: 长度对齐 skill_publications.source_personal_skill_id 的 VARCHAR(128)。
+_SKILL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+#: 与 /skills 下更早注册的字面路由同名的保留字。放行会被路由遮蔽（例如名为 stats 的技能
+#: 详情请求会命中统计接口），因此一律不允许创建。
+_RESERVED_SKILL_IDS = frozenset({"personal", "stats", "bindings", "publication-requests", "import"})
 
 
 def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
+    """严格校验 skill_id 与 relative_path，防御路径穿越。
+
+    改为**白名单**而不是黑名单：此前只挡 ``/`` ``\\`` ``..``，于是 ``skill_id="."`` 能通过
+    ——``os.path.join(SKILLS_DIR, ".")`` 就是技能库根目录本身，``commonpath`` 自比也相等，
+    DELETE 端点随后 ``rmtree`` 会删掉**整个公共技能库**。白名单顺带挡住中文、点开头、
+    空格等运行时本来就不认的名字。
     """
-    严格校验 skill_id 和 relative_path，防御路径穿越漏洞。
-    如果检测到安全红线越界攻击，立即抛出 403 异常。
-    """
-    if not skill_id or "/" in skill_id or "\\" in skill_id or ".." in skill_id:
-        raise HTTPException(status_code=400, detail="非法智能体技能ID格式")
+    if not skill_id or not _SKILL_ID_PATTERN.match(skill_id):
+        raise HTTPException(
+            status_code=400,
+            detail="非法技能 ID 格式：仅允许字母、数字、下划线与连字符，长度 1-128",
+        )
     if skill_id in _RESERVED_SKILL_IDS:
         raise HTTPException(status_code=400, detail=f"技能 ID「{skill_id}」为系统保留字，请更换")
-        
+
     skills_dir_abs = os.path.abspath(settings.SKILLS_DIR)
     skill_base_dir = os.path.abspath(os.path.join(skills_dir_abs, skill_id))
-    
-    if os.path.commonpath([skills_dir_abs, skill_base_dir]) != skills_dir_abs:
+
+    # 白名单已排除 "."/".."，这里再显式要求严格位于技能库之下（纵深防御）
+    if skill_base_dir == skills_dir_abs or os.path.commonpath(
+        [skills_dir_abs, skill_base_dir]
+    ) != skills_dir_abs:
         raise HTTPException(status_code=403, detail="安全拦截：技能路径越界")
         
     if not relative_path:
@@ -295,6 +322,40 @@ async def get_skill_publication_request(
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@router.get("/publication-requests/{version_id}/file", summary="读取发布申请快照内的文本文件")
+async def get_skill_publication_request_file(
+    version_id: str,
+    path: str,
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """读取审核快照里的单个文本文件，用于核验 scripts/ 等可执行内容。
+
+    审核面板此前只看得到 SKILL.md，而技能包允许携带任意脚本与资源文件——等于
+    「审核通过」会把从未被人看过的可执行代码发布进公共技能库，而界面文案却写着
+    「审查文件 Diff 与代码合规性」。这里按**快照**（提交那一刻的不可变副本）读取，
+    保证审的与将要发布的确实是同一份内容。
+
+    安全约束：只读、只允许文本扩展名、单文件 1MB 上限，且路径在 ``realpath`` 解析后
+    必须仍落在该 version 的快照目录内（软链接同样无法越界）。
+    """
+    try:
+        data = await get_publication_version(session, version_id=version_id, include_snapshot=True)
+        content = read_snapshot_text_file(data.get("snapshot_path") or "", path)
+        return {"status": "success", "path": path, "content": content}
+    except HTTPException:
+        raise
+    except SnapshotFileError as exc:
+        # 越界 / 不存在 / 非文本 / 过大：都是调用方问题，不该报 500
+        status_code = 404 if "不存在" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc))
+    except PublicationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error("[Skills] Failed to read publication snapshot file %s: %s", path, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/publication-requests/{version_id}/approve", summary="通过并发布平台技能")
 async def approve_skill_publication_request(
     version_id: str,
@@ -472,6 +533,55 @@ async def get_skill_file_content(
     except Exception as e:
         logger.error(f"[Skills] Failed to read file {path} in {skill_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{skill_id}/export", summary="导出平台技能为 zip 压缩包")
+async def export_skill_archive(
+    skill_id: str,
+    user: Dict = Depends(skill_platform_admin),
+):
+    """把整个技能目录打包下载，便于备份或迁移到其它环境/账号。"""
+    try:
+        skill_dir = validate_secure_skill_path(skill_id)
+        if not os.path.isdir(skill_dir):
+            raise HTTPException(status_code=404, detail="技能不存在")
+        payload = build_skill_archive(skill_dir, arc_prefix=f"{skill_id}/")
+        headers = {
+            "Content-Disposition": f'attachment; filename="{skill_id}.zip"',
+            "Content-Length": str(len(payload)),
+        }
+        return Response(content=payload, media_type="application/zip", headers=headers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[Skills] Failed to export skill %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/{skill_id}/download", summary="下载平台技能内的单个文件")
+async def download_skill_file(
+    skill_id: str,
+    path: str,
+    user: Dict = Depends(skill_platform_admin),
+):
+    """下载技能包内的单个文件（脚本、资源、说明文档等）。"""
+    try:
+        file_path = validate_secure_skill_path(skill_id, path)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        filename = os.path.basename(file_path)
+        with open(file_path, "rb") as handle:
+            payload = handle.read()
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(payload)),
+        }
+        return Response(content=payload, media_type="application/octet-stream", headers=headers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[Skills] Failed to download file %s in %s: %s", path, skill_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
 
 @router.put("/{skill_id}/files", response_model=Dict[str, Any])
 async def edit_skill_file(
@@ -754,6 +864,92 @@ def safe_extract_archive(content: bytes, filename: str, target_dir: str):
         raise HTTPException(status_code=400, detail="不支持的压缩格式。仅支持 .zip, .tar, .tar.gz, .tgz, .tar.bz2")
 
 
+#: 导出/打包时一律跳过的目录与文件：隐藏项（含 .seed 快照）、Python 缓存
+_EXPORT_SKIP_DIRS = frozenset({"__pycache__", "node_modules", ".git"})
+_EXPORT_SKIP_SUFFIXES = (".pyc", ".pyo", ".pyd")
+
+
+def _export_should_skip(name: str) -> bool:
+    return name.startswith(".") or name in _EXPORT_SKIP_DIRS or name.endswith(_EXPORT_SKIP_SUFFIXES)
+
+
+def build_skill_archive(skill_dir: str, *, arc_prefix: str = "") -> bytes:
+    """把技能目录打包为 zip 字节流，路径为包内相对路径。
+
+    导出是「技能可以搬走、可以备份」的基本能力：此前平台只进不出，用户想复用只能
+    手动去磁盘上找目录。隐藏项与 Python 缓存不打包（``.seed`` 是运行时快照，
+    ``__pycache__``/``*.pyc`` 是编译产物，都属于「本来就不该跟着走」的东西）。
+    """
+    skill_dir = os.path.abspath(skill_dir)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for current, dirnames, filenames in os.walk(skill_dir):
+            dirnames[:] = sorted(d for d in dirnames if not _export_should_skip(d))
+            for filename in sorted(filenames):
+                if _export_should_skip(filename):
+                    continue
+                full_path = os.path.join(current, filename)
+                if not os.path.isfile(full_path):
+                    continue
+                relative = os.path.relpath(full_path, skill_dir).replace(os.sep, "/")
+                archive.write(full_path, arcname=f"{arc_prefix}{relative}")
+    return buffer.getvalue()
+
+
+def atomic_import_skill_package(content: bytes, filename: str, skill_dir: str) -> None:
+    """把压缩包原子地导入为技能目录（解压 → 校验 → ``os.replace`` 替换）。
+
+    此前两侧 import 端点都是「先 ``rmtree`` 旧技能、再解包、失败再 ``rmtree``」：一个损坏
+    的包、或缺 ``SKILL.md`` 的包，会让**新旧两份同时消失**，且没有任何备份。这里改成与
+    :func:`app.services.skill_publication_service.materialize_snapshot` 同样的 staged +
+    backup 模式：校验全部通过后才替换，任何一步失败都保留原技能。
+
+    ``SKILL.md`` 一律按**精确大小写**校验：消费方（resolver / 注入 / 沙箱）都只认
+    ``SKILL.md``，放行 ``skill.md`` 会造出「列表里有、处处读不到」的幽灵技能。
+    """
+    skill_dir = os.path.abspath(skill_dir)
+    parent = os.path.dirname(skill_dir)
+    os.makedirs(parent, exist_ok=True)
+    staged = tempfile.mkdtemp(prefix=f".{os.path.basename(skill_dir)}-import-", dir=parent)
+    backup: str | None = None
+    try:
+        safe_extract_archive(content, filename, staged)
+
+        # 平铺外层文件夹：解包后只有一个子目录且其内含 SKILL.md 时，把内容提上来
+        visible_items = [i for i in os.listdir(staged) if not i.startswith(".")]
+        if len(visible_items) == 1:
+            single_sub = os.path.join(staged, visible_items[0])
+            if os.path.isdir(single_sub) and os.path.isfile(
+                os.path.join(single_sub, "SKILL.md")
+            ):
+                for item in os.listdir(single_sub):
+                    shutil.move(os.path.join(single_sub, item), os.path.join(staged, item))
+                os.rmdir(single_sub)
+
+        if not os.path.isfile(os.path.join(staged, "SKILL.md")):
+            raise HTTPException(
+                status_code=400,
+                detail="导入失败：压缩包根目录下必须包含核心规范文件 SKILL.md",
+            )
+
+        if os.path.exists(skill_dir):
+            backup = f"{skill_dir}.backup-{uuid.uuid4().hex}"
+            os.replace(skill_dir, backup)
+        os.replace(staged, skill_dir)
+        staged = ""
+        if backup:
+            shutil.rmtree(backup, ignore_errors=True)
+    except Exception:
+        if staged and os.path.exists(staged):
+            shutil.rmtree(staged, ignore_errors=True)
+        if backup and os.path.exists(backup):
+            # 回滚：把原技能放回去，宁可留下备份也不丢用户数据
+            if os.path.exists(skill_dir):
+                shutil.rmtree(skill_dir, ignore_errors=True)
+            os.replace(backup, skill_dir)
+        raise
+
+
 @router.post("/{skill_id}/upload-archive", response_model=Dict[str, Any])
 async def upload_skill_archive(
     skill_id: str,
@@ -811,45 +1007,7 @@ async def import_skill_package(
         if len(content) > 20 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="导入文件大小超出 20MB 限制")
             
-        if os.path.exists(skill_dir):
-            shutil.rmtree(skill_dir)
-            
-        os.makedirs(skill_dir, exist_ok=True)
-        
-        try:
-            safe_extract_archive(content, filename, skill_dir)
-            
-            # 平铺外层文件夹：若解包后只有一个子目录，且该子目录内含 SKILL.md
-            top_items = os.listdir(skill_dir)
-            visible_items = [i for i in top_items if not i.startswith(".")]
-            if len(visible_items) == 1:
-                single_sub = os.path.join(skill_dir, visible_items[0])
-                if os.path.isdir(single_sub):
-                    has_inner_skill_md = False
-                    for item in os.listdir(single_sub):
-                        if item.upper() == "SKILL.MD" and os.path.isfile(os.path.join(single_sub, item)):
-                            has_inner_skill_md = True
-                            break
-                    if has_inner_skill_md:
-                        for item in os.listdir(single_sub):
-                            shutil.move(os.path.join(single_sub, item), os.path.join(skill_dir, item))
-                        os.rmdir(single_sub)
-            
-            # 最终检验是否存在 SKILL.md
-            has_skill_md = False
-            for item in os.listdir(skill_dir):
-                if item.upper() == "SKILL.MD" and os.path.isfile(os.path.join(skill_dir, item)):
-                    has_skill_md = True
-                    break
-                    
-            if not has_skill_md:
-                shutil.rmtree(skill_dir)
-                raise HTTPException(status_code=400, detail="导入失败：压缩包根目录下必须包含核心规范文件 SKILL.md")
-                
-        except Exception as e:
-            if os.path.exists(skill_dir):
-                shutil.rmtree(skill_dir)
-            raise e
+        atomic_import_skill_package(content, filename, skill_dir)
             
         return {"status": "success", "message": f"技能 {skill_id} 导入成功"}
     except HTTPException:
@@ -857,6 +1015,44 @@ async def import_skill_package(
     except Exception as e:
         logger.error(f"[Skills] Failed to import skill package: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{skill_id}/rename", summary="重命名平台技能并同步引用")
+async def rename_platform_skill(
+    skill_id: str,
+    req: SkillRenameRequest,
+    user: Dict = Depends(skill_platform_admin),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """重命名平台技能。
+
+    技能 ID 就是目录名，同时被智能体的自定义技能白名单、以及会话里已挂载的技能
+    chip（Redis）引用。这里一次性同步这三处，并把同步结果如实返回；重命名是低频
+    管理操作，静默断链（技能还在但哪都挂不上）比不支持重命名更糟。
+    """
+    try:
+        skill_dir = validate_secure_skill_path(skill_id)
+        if not os.path.isdir(skill_dir):
+            raise HTTPException(status_code=404, detail="技能不存在")
+        report = await rename_skill(
+            session,
+            current_dir=skill_dir,
+            old_skill_id=skill_id,
+            new_skill_id=req.new_skill_id,
+            scope="global",
+        )
+        return {
+            "status": "success",
+            "data": report,
+            "message": f"技能已重命名为 {report['skill_id']}",
+        }
+    except SkillRenameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[Skills] Failed to rename skill %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.put("/{skill_id}/toggle", summary="启用或禁用平台技能")
@@ -874,7 +1070,12 @@ async def toggle_skill(
         from app.utils.skill_metadata import toggle_skill_enabled_in_file
         success = toggle_skill_enabled_in_file(skill_md_path, enabled)
         if not success:
-            raise HTTPException(status_code=500, detail="切换状态失败，请确认技能文件格式正常")
+            # 这是文件内容问题（缺 SKILL.md 或缺可识别的 frontmatter），不是服务端故障：
+            # 返回 400 让用户看到原因，此前报 500 会让人以为平台坏了，且技能永远禁不掉。
+            raise HTTPException(
+                status_code=400,
+                detail="无法切换启用状态：SKILL.md 缺失或缺少可识别的 YAML frontmatter",
+            )
         return {"status": "success", "message": f"技能已{'启用' if enabled else '禁用'}"}
     except HTTPException:
         raise

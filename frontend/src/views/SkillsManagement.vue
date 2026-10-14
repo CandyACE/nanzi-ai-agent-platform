@@ -374,6 +374,11 @@ const activePublicationReview = ref<PublicationReviewItem | null>(null)
 const publicationReviewLoading = ref(false)
 const publicationReviewAction = ref(false)
 const publicationReviewComment = ref('')
+// 审核面板的包内文件浏览：SKILL.md 只是技能包的一部分，scripts/ 等可执行文件同样会
+// 随「通过并发布」进入公共技能库，必须让审核者能逐个打开看，而不是只展示 SKILL.md。
+const publicationReviewFilePath = ref('SKILL.md')
+const publicationReviewFileContent = ref('')
+const publicationReviewFileLoading = ref(false)
 
 // 获取平台技能列表
 const fetchSkills = async () => {
@@ -481,8 +486,42 @@ const openPublicationReviewDetail = async (versionId: string) => {
     const response = await axios.get(`/api/portal/skills/publication-requests/${versionId}`)
     activePublicationReview.value = response.data?.data || null
     publicationReviewComment.value = ''
+    // 详情接口已下发 SKILL.md 正文，直接用作默认预览，避免多一次请求
+    publicationReviewFilePath.value = 'SKILL.md'
+    publicationReviewFileContent.value = activePublicationReview.value?.skill_md_content || ''
   } catch (e: any) {
     showToast(e.response?.data?.detail || '获取审核详情失败', 'error')
+  }
+}
+
+/**
+ * 读取审核快照里的指定文件（只读）。
+ *
+ * 走 `/publication-requests/{id}/file`，服务端从**提交快照**读取并做 realpath 越界校验，
+ * 因此审核者看到的与即将发布的内容必然一致（不会因为源技能随后被改动而错审）。
+ */
+const openPublicationReviewFile = async (filePath: string) => {
+  const review = activePublicationReview.value
+  if (!review || !filePath) return
+  publicationReviewFilePath.value = filePath
+  // SKILL.md 用详情接口已带回的正文，省一次往返
+  if (filePath === 'SKILL.md') {
+    publicationReviewFileContent.value = review.skill_md_content || ''
+    return
+  }
+  publicationReviewFileLoading.value = true
+  try {
+    const response = await axios.get(
+      `/api/portal/skills/publication-requests/${review.version_id}/file`,
+      { params: { path: filePath } },
+    )
+    if (activePublicationReview.value?.version_id !== review.version_id) return
+    publicationReviewFileContent.value = response.data?.content || ''
+  } catch (e: any) {
+    publicationReviewFileContent.value = ''
+    showToast(e.response?.data?.detail || `读取 ${filePath} 失败`, 'error')
+  } finally {
+    publicationReviewFileLoading.value = false
   }
 }
 
@@ -675,6 +714,69 @@ const createSkill = async () => {
 }
 
 // 物理删除整个技能（注销）
+/**
+ * 导出技能为 zip 下载。
+ *
+ * 走统一的 axios 请求（而不是 ``window.open``）：接口需要平台管理权限，直接开新窗口
+ * 会丢掉请求头里的凭据，拿到的只会是一段 401 JSON。
+ */
+const exportSkill = async (skillId: string, scope?: 'global' | 'personal') => {
+  const apiPrefix = resolveSkillApiPrefix(skillId, scope)
+  try {
+    const response = await axios.get(`${apiPrefix}/${skillId}/export`, { responseType: 'blob' })
+    const objectUrl = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = `${skillId}.zip`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(objectUrl)
+    showToast(`已开始下载 ${skillId}.zip`, 'success')
+  } catch (e: any) {
+    // responseType=blob 时错误体也是二进制，必须读出来才能给出可读提示
+    let detail = '导出失败'
+    try {
+      const raw = await e.response?.data?.text?.()
+      if (raw) detail = JSON.parse(raw)?.detail || detail
+    } catch {
+      /* 解析失败就退化为通用提示 */
+    }
+    showToast(detail, 'error')
+  }
+}
+
+/**
+ * 重命名技能。
+ *
+ * 技能 ID 就是目录名，同时被智能体技能白名单、发布谱系来源 ID、以及各会话已挂载的
+ * 技能 chip 引用；后端会一并同步，并把未能同步的项放进 warnings——这里必须把 warnings
+ * 展示出来，否则用户会以为一切正常。
+ */
+const renameSkill = async (skillId: string, scope?: 'global' | 'personal') => {
+  const input = window.prompt(`把技能 ID「${skillId}」重命名为（仅字母/数字/下划线/连字符）：`, skillId)
+  if (input === null) return
+  const newSkillId = input.trim()
+  if (!newSkillId || newSkillId === skillId) return
+  const apiPrefix = resolveSkillApiPrefix(skillId, scope)
+  try {
+    const response = await axios.put(`${apiPrefix}/${skillId}/rename`, { new_skill_id: newSkillId })
+    const warnings: string[] = response.data?.data?.warnings || []
+    showToast(
+      warnings.length
+        ? `已重命名为 ${newSkillId}，但部分引用未同步：${warnings.join('；')}`
+        : `已重命名为 ${newSkillId}`,
+      warnings.length ? 'error' : 'success',
+    )
+    if (activeSkillId.value === skillId) {
+      showDrawer.value = false
+    }
+    await Promise.all([fetchSkills(), fetchPersonalSkills()])
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '重命名失败', 'error')
+  }
+}
+
 const deleteSkill = (skillId: string) => {
   const isPersonal = activeScope.value === 'personal'
   confirmState.value = {
@@ -1709,7 +1811,31 @@ onUnmounted(() => {
             <span class="rounded bg-white px-2 py-1">文件 {{ activePublicationReview.file_count || 0 }}</span>
             <span class="rounded bg-white px-2 py-1">SHA256 {{ activePublicationReview.content_sha256?.slice(0, 12) }}</span>
           </div>
-          <pre class="mt-3 max-h-48 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-100">{{ activePublicationReview.skill_md_content || '暂无 SKILL.md 内容' }}</pre>
+          <!-- 包内文件浏览：此前只渲染 SKILL.md，scripts/ 里的可执行代码在无人查看的
+               情况下就能被批准发布进公共技能库，与「审查文件 Diff 与代码合规性」的文案不符。 -->
+          <div class="mt-3 grid gap-3 md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.3fr)]">
+            <div class="max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white p-2">
+              <div
+                v-if="!activePublicationReview.file_tree?.length"
+                class="p-3 text-center text-[11px] text-gray-400"
+              >
+                快照内没有可列出的文件
+              </div>
+              <SkillFileTree
+                v-else
+                :tree-data="activePublicationReview.file_tree"
+                :selected-path="publicationReviewFilePath"
+                @select-file="openPublicationReviewFile"
+              />
+            </div>
+            <div class="min-w-0">
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <span class="truncate font-mono text-[11px] text-gray-500">{{ publicationReviewFilePath || '未选择文件' }}</span>
+                <span v-if="publicationReviewFileLoading" class="shrink-0 text-[10px] text-gray-400">读取中…</span>
+              </div>
+              <pre class="max-h-72 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-100">{{ publicationReviewFileContent || '（该文件为空或不可预览）' }}</pre>
+            </div>
+          </div>
           <textarea
             v-model="publicationReviewComment"
             rows="3"
@@ -1856,6 +1982,26 @@ onUnmounted(() => {
               >
               <div class="peer h-4 w-7 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
             </label>
+
+            <!-- 导出 / 重命名：与删除同组，hover 显示 -->
+            <button
+              @click.stop="exportSkill(skill.id, skill.scope === 'personal' ? 'personal' : 'global')"
+              class="rounded-lg p-1.5 text-gray-400 opacity-0 transition-all hover:bg-emerald-50 hover:text-emerald-600 group-hover:opacity-100 focus:opacity-100"
+              title="导出为 zip 压缩包（可备份或迁移到其它环境）"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
+              </svg>
+            </button>
+            <button
+              @click.stop="renameSkill(skill.id, skill.scope === 'personal' ? 'personal' : 'global')"
+              class="rounded-lg p-1.5 text-gray-400 opacity-0 transition-all hover:bg-indigo-50 hover:text-indigo-600 group-hover:opacity-100 focus:opacity-100"
+              title="重命名技能 ID（会同步智能体白名单、发布记录与会话挂载）"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
 
             <!-- 删除：仅 hover 显示，降低误触 -->
             <button 
