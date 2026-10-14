@@ -21,30 +21,8 @@ _SKILL_CHAIN = [
     "components/InputModal.vue",
 ]
 
-#: 全站既有存量（棘轮：只减不增）
-_PENDING_NATIVE_DIALOGS = {
-    "components/embed/ChatInput.vue:1747",
-    "components/embed/ChatInput.vue:1754",
-    "components/embed/ChatInput.vue:1771",
-    "views/AgentDebug.vue:323",
-    "views/AgentDebug.vue:1732",
-    "views/AgentDebug.vue:1751",
-    "views/AgentDebug.vue:1837",
-    "views/AgentDebug.vue:1843",
-    "views/AgentDebug.vue:1862",
-    "views/AgentDebug.vue:1874",
-    "views/AgentDebug.vue:1880",
-    "views/EmbedChat.vue:6068",
-    "views/EmbedChat.vue:6443",
-    "views/EmbedChat.vue:6446",
-    "views/MetadataDatasets.vue:847",
-    "views/MetadataDatasets.vue:861",
-    "views/MetadataDatasets.vue:922",
-    "views/MetadataDatasets.vue:952",
-    "views/MetadataDatasets.vue:987",
-    "views/MetadataDatasets.vue:1086",
-    "views/MetadataDatasets.vue:1090",
-}
+#: 已清零：全站原生弹窗全部收敛完毕，保持为空即为「零容忍」（只减不增）。
+_PENDING_NATIVE_DIALOGS: set[str] = set()
 
 #: 原生弹窗的两种调用形态：显式 `window.xxx(` 与裸 `xxx(`。
 #: 反查断言不能写成 `(?<![\w.])` —— 那会把最常见、也最该拦的 `window.prompt(` 本身

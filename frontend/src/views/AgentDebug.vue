@@ -320,7 +320,7 @@ const continueChatFromTrace = () => {
         loadSessionHistory(targetId);
         showSessionPreview.value = false;
     } else {
-        alert("无法继续：该会话可能未正确保存或仅为单次追踪记录。");
+        showToast("无法继续：该会话可能未正确保存或仅为单次追踪记录。", "error");
     }
 };
 
@@ -1729,7 +1729,7 @@ watch(
 const loadingConfig = ref(false);
 const loadCurrentPrompt = async () => {
   if (!agentParams.agent_id) {
-    alert("请先选择一个特定的智能体");
+    showToast("请先选择一个特定的智能体", "warning");
     return;
   }
 
@@ -1748,7 +1748,7 @@ const loadCurrentPrompt = async () => {
     }
   } catch (e) {
     console.error("Failed to load agent config", e);
-    alert("加载配置失败，请检查该智能体是否已发布版本");
+    showToast("加载配置失败，请检查该智能体是否已发布版本", "error");
   } finally {
     loadingConfig.value = false;
   }
@@ -1834,13 +1834,13 @@ const performDeleteCommand = async () => {
     commandToDelete.value = null;
   } catch (e) {
     console.error("Failed to delete command", e);
-    alert("删除失败");
+    showToast("删除失败", "error");
   }
 };
 
 const saveCommand = async () => {
   if (!editingCommand.value.label || !editingCommand.value.command) {
-    alert("请填写完整信息");
+    showToast("请填写完整信息", "warning");
     return;
   }
 
@@ -1859,7 +1859,7 @@ const saveCommand = async () => {
     resetCommandForm();
   } catch (e) {
     console.error("Failed to save command", e);
-    alert("保存失败");
+    showToast("保存失败", "error");
   }
 };
 
@@ -1870,14 +1870,10 @@ const closeModals = () => {
   selectedRawPrompt.value = null;
 };
 
-const handleImageUpload = () => {
-  alert("多模态图片上传功能开发中...");
-};
-
 // --- Export Chat ---
 const exportChat = () => {
   if (messages.value.length === 0) {
-    alert("暂无对话记录");
+    showToast("暂无对话记录", "info");
     return;
   }
 
@@ -5232,7 +5228,6 @@ onUnmounted(() => {
           @stop="stopGeneration"
           @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
           @open-command-manager="openCommandManager"
-          @upload-image="handleImageUpload"
           @edit-command="editCommand"
           @delete-command="confirmDeleteCommand"
           @switch-mode="handleSwitchMode"

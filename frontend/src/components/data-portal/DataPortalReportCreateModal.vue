@@ -916,6 +916,7 @@ onBeforeUnmount(destroySqlEditor)
 </script>
 
 <template>
+  <Teleport to="body">
   <div
     v-if="visible"
     class="fixed inset-0 z-[250] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
@@ -1281,8 +1282,10 @@ onBeforeUnmount(destroySqlEditor)
       </div>
     </div>
   </div>
+  </Teleport>
 
   <!-- 动态参数试跑选择器：只影响本次预览，不修改保存后的默认运行参数 -->
+  <Teleport to="body">
   <div
     v-if="visible && showTestParameterModal"
     class="fixed inset-0 z-[270] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
@@ -1402,6 +1405,7 @@ onBeforeUnmount(destroySqlEditor)
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
