@@ -2,8 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any
 from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
+import re
 import uuid
 import json
+
+import httpx
 
 from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.core.orm import get_db_session
@@ -12,6 +16,8 @@ from app.models.mcp import McpServer, McpToolCache
 from app.schemas.tool import (
     SysApiToolBatchGroupRequest,
     SysApiToolCreate,
+    SysApiToolPreviewRequest,
+    SysApiToolPreviewResponse,
     SysApiToolResponse,
     SysApiToolUpdate,
 )
@@ -22,8 +28,11 @@ from app.services.ai.tools.forbidden_catalog import (
     ForbiddenToolCandidate,
     merge_forbidden_tool_candidates,
 )
+from app.services.ai.tools.generic_api import GenericApiToolFactory, UnsupportedMethodError
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 # 注册表写操作所需的权限依赖抽成具名对象：避免同一字符串散落多处，也便于测试覆盖。
 SYSTEM_CONFIG_SAVE_PERMISSION = require_permission("element", "element:system:config_save")
@@ -284,3 +293,130 @@ async def delete_tool(
     await db.delete(tool)
     await db.commit()
     return {"status": "success", "message": "Tool deleted"}
+
+
+# --------------------------------------------------------------------------- #
+# 保存前试跑
+# --------------------------------------------------------------------------- #
+
+#: 试跑响应体回显上限：足够看清结构，又不会被超大响应拖垮界面与审计日志。
+PREVIEW_BODY_LIMIT = 2000
+
+#: URL 模板里未替换的参数占位符。
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+#: 运行时真正支持的方法——与 ``generic_api`` 的请求分支逐字对齐。
+_RUNTIME_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+
+@router.post("/preview", response_model=SysApiToolPreviewResponse)
+async def preview_tool(
+    payload: SysApiToolPreviewRequest,
+    user: Dict = Depends(SYSTEM_CONFIG_SAVE_PERMISSION),
+):
+    """保存前试跑一次（不落库、不新增权限）。
+
+    **走的是与运行时完全相同的请求内核**（``GenericApiToolFactory._perform_request``）：
+    另写一套请求逻辑必然导致「试跑能过、运行时调不通」的口径分裂。
+
+    对目标地址**不额外设限**——能创建工具的人本来就能让智能体请求同一地址，
+    在试跑上加限制只会误伤内网自建 API，并不提高安全水位。私网地址由前端醒目
+    提示；每次试跑都会经审计中间件留痕（请求体里的凭据由 ``mask_sensitive_data``
+    脱敏后落库）。
+
+    失败一律以 ``ok=False`` + ``error_kind`` 返回，不抛 500：试跑的价值就在于
+    「把原因说清楚」，而不是让界面拿到一个无法解释的错误。
+    """
+    # 只有「模板里有占位符，**且**参数里没给值」才算没填。
+    # 只扫模板会误杀：用户明明把 order_id 填成 11333，却被回一句「地址里还有没填的参数」。
+    # 判定口径要与运行时的路径替换一致——那边也是拿 params 里的值去替换 {name}。
+    params = payload.params or {}
+    unfilled = [
+        name
+        for name in _PLACEHOLDER_RE.findall(payload.url_template)
+        if params.get(name) is None or not str(params.get(name)).strip()
+    ]
+    if unfilled:
+        names = "、".join(f"{{{name}}}" for name in unfilled)
+        return SysApiToolPreviewResponse(
+            ok=False,
+            error_kind="missing_param",
+            message=f"地址里还有没填的参数：{names}。请先填入测试值再试跑",
+        )
+
+    method = (payload.method or "GET").strip().upper()
+    if method not in _RUNTIME_METHODS:
+        supported = " / ".join(sorted(_RUNTIME_METHODS))
+        return SysApiToolPreviewResponse(
+            ok=False,
+            error_kind="unsupported_method",
+            message=f"平台运行时不支持 {method} 方法，可用的只有 {supported}",
+        )
+
+    # 内存草稿：与运行时拿到的 SysApiTool 同形（headers / schema 都是 JSON 字符串）
+    draft = SysApiTool(
+        id="__preview__",
+        name="__preview__",
+        method=method,
+        url_template=payload.url_template,
+        headers=json.dumps(payload.headers or {}, ensure_ascii=False),
+        parameter_schema=json.dumps(payload.parameter_schema or {}, ensure_ascii=False),
+        is_active=False,
+    )
+
+    try:
+        response, elapsed_ms, _url = await GenericApiToolFactory._perform_request(
+            draft,
+            dict(payload.params or {}),
+            # 非 2xx 也要拿到原始响应，用于区分「接口通了但拒绝」与「根本没连上」
+            raise_on_http_error=False,
+        )
+    except UnsupportedMethodError as exc:
+        return SysApiToolPreviewResponse(
+            ok=False, error_kind="unsupported_method", message=str(exc),
+        )
+    except httpx.TimeoutException:
+        return SysApiToolPreviewResponse(
+            ok=False,
+            error_kind="timeout",
+            message="请求超时（30 秒）。目标接口没有在时限内响应，请确认地址是否可达",
+        )
+    except httpx.InvalidURL:
+        return SysApiToolPreviewResponse(
+            ok=False, error_kind="invalid_url", message="地址格式不合法，无法发起请求",
+        )
+    except httpx.HTTPError as exc:
+        return SysApiToolPreviewResponse(
+            ok=False,
+            error_kind="connection",
+            message=f"没能连上目标接口（{type(exc).__name__}）：{exc}",
+        )
+    except Exception as exc:  # noqa: BLE001 —— 试跑必须给出原因，而不是甩一个 500
+        logger.warning("[ToolPreview] unexpected failure: %s", exc)
+        return SysApiToolPreviewResponse(
+            ok=False, error_kind="connection", message=f"试跑失败：{exc}",
+        )
+
+    raw_body = response.text or ""
+    truncated = len(raw_body) > PREVIEW_BODY_LIMIT
+    body_text = raw_body[:PREVIEW_BODY_LIMIT]
+
+    if 200 <= response.status_code < 300:
+        return SysApiToolPreviewResponse(
+            ok=True,
+            status_code=response.status_code,
+            elapsed_ms=elapsed_ms,
+            body=body_text,
+            body_truncated=truncated,
+            message=f"HTTP {response.status_code}",
+        )
+
+    return SysApiToolPreviewResponse(
+        ok=False,
+        status_code=response.status_code,
+        elapsed_ms=elapsed_ms,
+        body=body_text,
+        body_truncated=truncated,
+        error_kind="http_error",
+        message=f"接口返回 HTTP {response.status_code}——地址是通的，但目标接口拒绝了这次请求",
+    )

@@ -87,3 +87,36 @@ class SysApiToolResponse(SysApiToolBase):
             except ValueError:
                 return {}
         return v
+
+
+class SysApiToolPreviewRequest(BaseModel):
+    """保存前试跑：提交**草稿**（不落库），由服务端代发一次请求。
+
+    没有 ``name`` 字段是刻意的——试跑不需要工具名，少一个字段就少一处
+    「看起来会被保存」的误解。
+    """
+
+    method: str = Field("GET", description="HTTP Method")
+    url_template: str = Field(..., min_length=1, description="目标 API URL 模板")
+    headers: Optional[Dict[str, str]] = Field(default_factory=dict)
+    parameter_schema: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="试跑测试值：只用于这一次请求，绝不写入 sys_api_tools",
+    )
+
+
+class SysApiToolPreviewResponse(BaseModel):
+    ok: bool
+    status_code: Optional[int] = None
+    elapsed_ms: int = 0
+    body: str = ""
+    body_truncated: bool = False
+    error_kind: Optional[str] = Field(
+        None,
+        description=(
+            "http_error（接口通了但拒绝）/ connection（根本没连上）/ timeout / "
+            "invalid_url / unsupported_method / missing_param"
+        ),
+    )
+    message: str = ""

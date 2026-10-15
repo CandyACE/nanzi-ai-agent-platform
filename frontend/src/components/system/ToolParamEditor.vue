@@ -1,0 +1,212 @@
+<script setup lang="ts">
+/**
+ * 参数定义编辑器：JSON 模式 / 可视化模式。
+ *
+ * 从 ``ToolRegistry.vue`` 整块搬出来的，做成共享组件的原因是「添加工具」现在有
+ * 表单模式与向导模式两个 tab——参数编辑 UI 各写一份必然逐渐漂移，而参数定义是
+ * 运行时真正消费的东西，两边不一致会直接导致「界面上能填、运行时调不通」。
+ *
+ * 数据逻辑全部在 ``utils/toolSchema.ts``（纯函数，可用 Node 直接跑往返测试）；
+ * 本组件只维护 UI 状态：当前模式、可视化行数据，以及「非法 JSON 不切走」这类交互约定。
+ *
+ * 组件对 ``modelValue`` 是受控的：JSON 模式直接写回文本，可视化模式经
+ * ``serializeToolSchema`` 写回——**绝不自己拼 JSON**（顶层扩展键与嵌套子结构会被抹掉）。
+ */
+import { computed, ref, watch } from 'vue'
+import {
+    PARAM_TYPE_OPTIONS,
+    parseToolSchema,
+    serializeToolSchema,
+    type ParsedToolSchema,
+    type SchemaParam,
+} from '../../utils/toolSchema'
+import type { ParamLocation } from '../../utils/toolDraft'
+
+const props = withDefaults(defineProps<{
+    modelValue: string
+    /** ``wizard`` 时每行额外显示参数落位标签（向导第 3 步用） */
+    mode?: 'full' | 'wizard'
+    /** 参数名 → 落位；仅向导模式传入 */
+    locations?: Record<string, ParamLocation>
+}>(), {
+    mode: 'full',
+    locations: () => ({}),
+})
+
+const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+
+type VisualParam = SchemaParam & { key: string }
+
+const schemaEditorMode = ref<'json' | 'visual'>('json')
+const visualParams = ref<VisualParam[]>([])
+const parsedSchema = ref<ParsedToolSchema>({ shape: 'flat', hadRequiredList: false, rest: {}, params: [] })
+const jsonHint = ref('')
+let visualParamSeed = 0
+
+const nextVisualParamKey = () => {
+    visualParamSeed += 1
+    return `param-${visualParamSeed}`
+}
+
+// 嵌套参数（带 items / properties 子结构）在可视化里只能改类型、描述与必填，
+// 子结构本身请回 JSON 模式编辑——这里只做提示。
+const visualNestedCount = computed(() => visualParams.value.filter(
+    (param) => param.extra.items || param.extra.properties
+).length)
+
+const buildSchemaJson = (): string => serializeToolSchema({
+    shape: parsedSchema.value.shape,
+    hadRequiredList: parsedSchema.value.hadRequiredList,
+    rest: parsedSchema.value.rest,
+    // 剥掉仅用于 v-for 的 key：它不属于 schema 数据
+    params: visualParams.value.map(({ key, ...param }) => param),
+})
+
+const loadVisualFromJson = (): boolean => {
+    const parsed = parseToolSchema(props.modelValue)
+    if (!parsed) {
+        // 留在原地：既不丢用户输入，也能让他看到错在哪
+        jsonHint.value = '参数定义不是合法 JSON，请先修正后再切到可视化编辑'
+        return false
+    }
+    jsonHint.value = ''
+    parsedSchema.value = parsed
+    visualParams.value = parsed.params.map((param) => ({ ...param, key: nextVisualParamKey() }))
+    return true
+}
+
+const switchSchemaMode = (mode: 'json' | 'visual') => {
+    if (mode === schemaEditorMode.value) return
+    if (mode === 'visual') {
+        if (!loadVisualFromJson()) return
+        schemaEditorMode.value = 'visual'
+        return
+    }
+    emit('update:modelValue', buildSchemaJson())
+    schemaEditorMode.value = 'json'
+}
+
+const addVisualParam = () => {
+    visualParams.value = [...visualParams.value, {
+        key: nextVisualParamKey(),
+        name: '',
+        type: 'string',
+        required: true,
+        description: '',
+        defaultValue: '',
+        extra: {},
+    }]
+}
+
+const removeVisualParam = (index: number) => {
+    visualParams.value = visualParams.value.filter((_, i) => i !== index)
+}
+
+const onJsonInput = (event: Event) => {
+    jsonHint.value = ''
+    emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
+}
+
+// 可视化行改动 → 写回受控值。比较一次是为了避免「自己写出去的又触发回解析」的死循环。
+watch(visualParams, () => {
+    if (schemaEditorMode.value !== 'visual') return
+    const next = buildSchemaJson()
+    if (next !== props.modelValue) emit('update:modelValue', next)
+}, { deep: true })
+
+// 外部改写文本（换工具、向导重新生成参数、编辑已有工具）时，可视化行必须跟着重解析，
+// 否则下一次行内改动会把外部刚写进来的内容整个覆盖掉。
+watch(() => props.modelValue, (next) => {
+    if (schemaEditorMode.value !== 'visual') return
+    if (next === buildSchemaJson()) return
+    loadVisualFromJson()
+})
+
+const locationLabel = (name: string): string => {
+    const location = props.locations?.[name]
+    if (location === 'path') return '路径参数'
+    if (location === 'query') return '查询参数'
+    if (location === 'body') return '请求体'
+    return ''
+}
+</script>
+
+<template>
+  <div>
+    <div class="flex flex-wrap items-center gap-2">
+      <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
+      <div class="flex bg-gray-100 p-0.5 rounded-lg text-xs" role="group" aria-label="参数定义编辑模式">
+        <button
+          type="button"
+          class="px-2.5 py-1 rounded-md transition-all font-medium"
+          :class="schemaEditorMode === 'json' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
+          @click="switchSchemaMode('json')"
+        >JSON</button>
+        <button
+          type="button"
+          class="px-2.5 py-1 rounded-md transition-all font-medium"
+          :class="schemaEditorMode === 'visual' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
+          @click="switchSchemaMode('visual')"
+        >可视化</button>
+      </div>
+      <span v-if="schemaEditorMode === 'visual' && visualNestedCount > 0" class="text-xs text-amber-600">
+        有 {{ visualNestedCount }} 个嵌套参数：可改类型/描述/必填，子结构请用 JSON 模式编辑
+      </span>
+    </div>
+
+    <textarea
+      v-if="schemaEditorMode === 'json'"
+      :value="modelValue"
+      rows="5"
+      class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100"
+      placeholder='{ "city": { "type": "string", "description": "城市名" } }'
+      @input="onJsonInput"
+    ></textarea>
+
+    <div v-else class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
+      <p v-if="visualParams.length === 0" class="px-1 py-1 text-xs text-gray-400">还没有参数，点下面的「+ 添加参数」开始</p>
+      <div v-for="(p, index) in visualParams" :key="p.key" class="flex flex-wrap items-center gap-2 rounded-md bg-white p-2 shadow-sm">
+        <span
+          v-if="mode === 'wizard' && locationLabel(p.name)"
+          class="rounded px-1.5 py-0.5 text-[11px] font-medium"
+          :class="{
+            'bg-purple-50 text-purple-700': locations[p.name] === 'path',
+            'bg-blue-50 text-blue-700': locations[p.name] === 'query',
+            'bg-green-50 text-green-700': locations[p.name] === 'body',
+          }"
+        >{{ locationLabel(p.name) }}</span>
+        <input v-model="p.name" class="w-40 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono" placeholder="参数名" />
+        <select v-model="p.type" class="w-24 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono">
+          <option v-for="option in PARAM_TYPE_OPTIONS" :key="option" :value="option">{{ option }}</option>
+        </select>
+        <label class="flex items-center gap-1 text-xs text-gray-600">
+          <input type="checkbox" v-model="p.required" class="h-3.5 w-3.5 text-primary focus:ring-primary border-gray-300 rounded" />
+          必填
+        </label>
+        <input v-model="p.description" class="min-w-[10rem] flex-1 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs" placeholder="描述（给 LLM 看）" />
+        <input v-model="p.defaultValue" :disabled="p.required" class="w-32 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono disabled:bg-gray-100" :placeholder="p.required ? '默认值（需非必填）' : '默认值'" />
+        <span v-if="p.extra.items || p.extra.properties" class="rounded-full bg-amber-50 px-2 text-xs leading-5 text-amber-700" title="嵌套子结构请用 JSON 模式编辑">嵌套</span>
+        <button
+          type="button"
+          class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          :title="`删除参数 ${p.name || index + 1}`"
+          :aria-label="`删除参数 ${p.name || index + 1}`"
+          @click="removeVisualParam(index)"
+        >
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      </div>
+      <button
+        type="button"
+        class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+        @click="addVisualParam"
+      >+ 添加参数</button>
+      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>（运行时缺省按必填处理，默认值只在非必填时生效）</p>
+    </div>
+
+    <p v-if="jsonHint" class="mt-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{{ jsonHint }}</p>
+    <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
+  </div>
+</template>

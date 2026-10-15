@@ -1,4 +1,5 @@
 import logging
+import time
 import httpx
 import json
 from typing import Dict, Any, Type
@@ -8,6 +9,20 @@ from app.models.tool import SysApiTool
 from app.services.ai.grounding.models import EvidenceType
 
 logger = logging.getLogger(__name__)
+
+class UnsupportedMethodError(Exception):
+    """运行时遇到不支持的方法时抛出。
+
+    单独成一个类型（而不是在请求分支里直接 return 字符串）有两个原因：
+    1. ``_perform_request`` 的返回类型得以保持「一定是 response」；
+    2. ``_execute_request`` 能逐字节复现历史文案 ``[Error] Unsupported method: XXX``，
+       试跑端点也能把它归成 ``unsupported_method`` 而不是笼统的连接失败。
+    """
+
+    def __init__(self, method: str):
+        self.method = method
+        super().__init__(f"Unsupported method: {method}")
+
 
 class GenericApiToolFactory:
     @staticmethod
@@ -126,12 +141,24 @@ class GenericApiToolFactory:
         return tool
 
     @staticmethod
-    async def _execute_request(config: SysApiTool, params: Dict[str, Any]) -> Any:
-        """
-        Executes the HTTP request.
+    async def _perform_request(
+        config: SysApiTool,
+        params: Dict[str, Any],
+        *,
+        raise_on_http_error: bool = True,
+    ) -> tuple[Any, int, str]:
+        """发一次请求的公共内核：路径替换 + 参数落位 + headers + 超时。
+
+        抽出来的唯一目的，是让「保存前试跑」与智能体运行时**走同一段代码**，
+        避免出现「试跑通过、运行时却失败」的口径分裂。
+
+        返回 ``(response, elapsed_ms, final_url)``。
+        ``raise_on_http_error=True``（运行时默认）时，非 2xx 抛 ``RuntimeError``，
+        文案与历史行为逐字节一致；试跑传 ``False``，以取得原始 status 与 body
+        用于分类展示。连接层异常一律原样抛出，由调用方决定怎么呈现。
         """
         url = config.url_template
-        
+
         # 1. Path Substitution
         path_params = {}
         for key, value in params.items():
@@ -139,53 +166,71 @@ class GenericApiToolFactory:
             if placeholder in url:
                 url = url.replace(placeholder, str(value))
                 path_params[key] = value
-        
+
         # Filter out path params from remaining params
         remaining_params = {k: v for k, v in params.items() if k not in path_params}
-        
+
         # 2. Headers
         headers = {}
         if config.headers:
-             h_config = config.headers
-             if isinstance(h_config, str):
-                 try:
-                     h_config = json.loads(h_config)
-                 except:
-                     h_config = {}
-             if isinstance(h_config, dict):
+            h_config = config.headers
+            if isinstance(h_config, str):
+                try:
+                    h_config = json.loads(h_config)
+                except Exception:
+                    h_config = {}
+            if isinstance(h_config, dict):
                 headers.update(h_config)
-        
+
         # 3. Request
         method = config.method.upper()
-        
+
         logger.info(f"[GenericTool] Executing {config.name} ({method} {url}) with params: {remaining_params}")
-        
+
+        started = time.monotonic()
+        # We disable trust_env=True to avoid SOCKS proxy issues if dependency is missing
+        # If explicit proxy is needed, it should be configured in settings or handled via specific client config.
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            if method == "GET":
+                response = await client.get(url, params=remaining_params, headers=headers)
+            elif method in ["POST", "PUT", "PATCH", "DELETE"]:
+                # Default to JSON body for non-GET
+                response = await client.request(method, url, json=remaining_params, headers=headers)
+            else:
+                raise UnsupportedMethodError(method)
+
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+
+        if raise_on_http_error and not 200 <= response.status_code < 300:
+            raise RuntimeError(
+                f"HTTP {response.status_code}: {response.text[:500]}"
+            )
+
+        return response, elapsed_ms, url
+
+    @staticmethod
+    async def _execute_request(config: SysApiTool, params: Dict[str, Any]) -> Any:
+        """
+        Executes the HTTP request.
+        """
         try:
-            # We disable trust_env=True to avoid SOCKS proxy issues if dependency is missing
-            # If explicit proxy is needed, it should be configured in settings or handled via specific client config.
-            async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
-                if method == "GET":
-                    response = await client.get(url, params=remaining_params, headers=headers)
-                elif method in ["POST", "PUT", "PATCH", "DELETE"]:
-                    # Default to JSON body for non-GET
-                    response = await client.request(method, url, json=remaining_params, headers=headers)
-                else:
-                    return f"[Error] Unsupported method: {method}"
+            response, _elapsed_ms, _url = await GenericApiToolFactory._perform_request(
+                config, params
+            )
 
-                if not 200 <= response.status_code < 300:
-                    raise RuntimeError(
-                        f"HTTP {response.status_code}: {response.text[:500]}"
-                    )
-                if response.status_code == 204 or not response.content:
-                    return {"success": True, "content": ""}
-                
-                # Try to format JSON result
-                try:
-                    resp_json = response.json()
-                    return json.dumps(resp_json, ensure_ascii=False)
-                except:
-                    return response.text
+            if response.status_code == 204 or not response.content:
+                return {"success": True, "content": ""}
 
+            # Try to format JSON result
+            try:
+                resp_json = response.json()
+                return json.dumps(resp_json, ensure_ascii=False)
+            except Exception:
+                return response.text
+
+        except UnsupportedMethodError as e:
+            # 历史文案：``[Error] Unsupported method: XXX``
+            return f"[Error] {e}"
         except Exception as e:
             logger.error(f"[GenericTool] Execution failed: {e}")
             return f"[Execution Error] {str(e)}"
