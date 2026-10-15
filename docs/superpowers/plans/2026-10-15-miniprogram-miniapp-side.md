@@ -223,6 +223,16 @@ exports.main = async (event) => {
 }
 ```
 
+> 💡 **页面侧错误文案（实施时补充）**：云函数只负责把 `code`（如 `HTTP_403`）与平台 `detail` 回传，
+> **不要**在云函数里把 403 合并成一句通用文案——403 至少有四类成因（Key 无效 / 网关账号缺权限 /
+> 开关未开 / **该用户账号被停用**）。合并之后用户会报「微端未开启」，管理员去查 `miniprogram_enabled`
+> 却发现是开着的，**排查方向彻底跑偏**，而真实原因只是"这一个人的账号被停用了"。
+>
+> 页面侧请把 `code` 翻译成 `title` / `desc` / `hint` 三段用户语言，`HTTP_403` 再按 `detail` 细分成
+> **未开启 / 权限不足 / 账号停用**三类；同时把 `code` 与平台原文保留在页面上（可长按复制），
+> 方便用户直接粘给管理员。完整参考实现见
+> `docs/md/wechat_miniprogram_integration_guide.md` 第七章第 5 节。
+
 - [ ] **Step 2: 写依赖声明**
 
 创建 `cloudfunctions/nanziSession/package.json`：

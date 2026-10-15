@@ -221,11 +221,14 @@
 | HTTP | 触发条件 | 你该怎么处理 |
 | --- | --- | --- |
 | **400** | `openid` 缺失或格式非法 | 说明 `getWXContext()` 没取到值 → 检查云函数是否真在小程序环境里被调用 |
-| **401 / 403** | 未带 API Key、Key 无效，或账号**缺少 `POST:/api/v1/embed/tickets`** | 检查环境变量与平台授权；错误信息会写明 `Permission required: ...` |
+| **401** | 未带 API Key 或 Key 无效 | 检查云函数的 `NANZI_API_KEY` 与平台授权 |
+| **403** | 账号**缺少 `POST:/api/v1/embed/tickets`** | 错误信息会写明 `Permission required: ...`，见[第四章第 2 节](#2-建专用网关账号并授权) |
 | **403** | 开关 `miniprogram_enabled` 未开启（「微信小程序微端未开启」） | 见[第四章第 1 节](#1-打开微端开关) |
-| **403** | 该账号已被禁用 | 让管理员解禁 |
-| **404** | 传了 `agent_id` 但该智能体不存在 | 去掉 `agent_id` 或换一个 |
+| **403** | **该用户自己的**账号已被停用（「账号已被禁用」或「目标用户账号已被禁用，无法签发嵌入凭证」） | 到用户管理里启用该账号；**这不是全局故障，别去查开关** |
+| **404** | 传了 `agent_id` 但该智能体不存在（「目标用户不存在」） | 去掉 `agent_id` 或换一个 |
 | **500** | 平台内部错误 | 重试；持续失败查平台日志 |
+
+> ⚠️ **403 有四类成因，必须区分**。它们的**影响范围**和**修复动作**完全不同：开关未开 = 全员不可用；缺权限 = 全员不可用；Key 无效 = 全员不可用；而**账号被停用只影响这一个用户**。把它们合并成一句「未开启或未授权」，会让排查方向彻底跑偏——详见[第七章第 5 节](#5-把错误翻译成用户看得懂的话) 与[第九章 Q1](#q1-用户报微端未开启--没有访问权限怎么定位)。
 
 ### 4. 拿到 ticket 之后：自己拼 web-view URL
 
@@ -322,11 +325,18 @@ exports.main = async () => {
       { 'X-API-Key': apiKey }
     )
 
-    if (resp.status !== 200 || !resp.body || resp.body.code !== 200) {
+    if (resp.status !== 200 || !resp.body || !resp.body.data) {
       console.error('[nanziSession] 平台返回异常', resp.status, resp.raw)
-      const msg =
-        resp.status === 403 ? '微端未开启或未授权，请联系管理员' : '服务暂不可用，请稍后重试'
-      return { ok: false, message: msg }
+      // ⚠️ 不要在这里把所有 403 合并成一句通用文案。403 至少有四类完全不同的成因
+      //    （Key 无效 / 网关账号缺权限 / 开关未开 / 该用户账号被停用），合并之后用户
+      //    和管理员都会被误导：用户报「微端未开启」，管理员去查开关却发现是开着的。
+      // 正确做法：把 HTTP 状态码作为 code 回传、detail 原样透传，由页面按成因分别
+      //          翻译成用户看得懂的话（见第七章第 5 节）。
+      return {
+        ok: false,
+        code: 'HTTP_' + resp.status,
+        message: (resp.body && resp.body.detail) || '平台返回异常',
+      }
     }
 
     const data = resp.body.data || {}
@@ -338,8 +348,9 @@ exports.main = async () => {
       base_url: baseUrl,
     }
   } catch (e) {
+    // 网络/超时等本地失败：同样带上 code，页面才好分派文案
     console.error('[nanziSession] 调用失败', e)
-    return { ok: false, message: '网络异常，请稍后重试' }
+    return { ok: false, code: 'REQUEST_FAILED', message: '网络异常，请稍后重试' }
   }
 }
 ```
@@ -418,6 +429,98 @@ requestTicket() {
 window.__wxjs_environment === 'miniprogram' || /miniProgram/i.test(navigator.userAgent)
 ```
 
+### 5. 把错误翻译成用户看得懂的话
+
+**别把云函数回的 `message` 直接甩给用户。** 它是平台的原始文案（如「目标用户账号已被禁用，无法签发嵌入凭证」），带内部口吻，也不告诉用户下一步该做什么。
+
+正确做法是**分层**：**云函数回 `code`，页面按 `code` 分派文案**；`code` 不够用时再用 `detail` 细分。
+
+> ⚠️ **403 必须细分**。它至少有四类完全不同的成因，**影响范围和修复动作都不一样**：
+
+| `detail` 中的特征 | 真实成因 | 影响范围 | 该给用户的提示 |
+| --- | --- | --- | --- |
+| 含「未开启」 | 管理员没开 `miniprogram_enabled` | **全员** | 「功能尚未开放」+ 找管理员开启 |
+| 含 `Permission` / 「权限」 | 网关账号缺「代他人签发嵌入凭证」 | **全员** | 「服务权限不足」+ 找技术人员配权限 |
+| 含「禁用」/「停用」 | **该用户自己的**账号被停用 | **仅此一人** | 「账号已停用」+ 找管理员处理 |
+| 其它 | 未知 | — | 通用「没有访问权限」 |
+
+**合并成一句通用文案的代价**：用户报「微端未开启」→ 管理员去查开关 → 发现是开着的 → **排查方向全错**，而真实原因只是"这一个人的账号被停用了"。
+
+参考实现（`pages/chat/chat.js`）：把 `code` 翻成 `title` / `desc` / `hint` 三段用户语言，同时**原样保留** `code` 与平台原文，供复制给管理员排查。
+
+```js
+function describeError(input) {
+  const r = input || {}
+  const code = r.code || ''
+  const detail = r.message || ''
+  const base = { code: code || 'UNKNOWN', detail }   // 原文保留，便于粘贴给管理员
+
+  switch (code) {
+    case 'HTTP_403':
+      // 403 有几类完全不同的成因，按平台原文再细分一次
+      if (/未开启/.test(detail)) {
+        return Object.assign(base, {
+          title: '功能尚未开放',
+          desc: '管理员还没有为微信小程序开启 NanZi 服务，开启后即可正常使用。',
+          hint: '把下面的技术信息发给管理员，开启后点「重试」即可。',
+        })
+      }
+      if (/permission|权限/i.test(detail)) {
+        return Object.assign(base, {
+          title: '服务权限不足',
+          desc: '用于调用平台的账号缺少必要权限。',
+          hint: '请联系技术人员，为网关账号开通「代他人签发嵌入凭证」权限。',
+        })
+      }
+      if (/禁用|停用/.test(detail)) {
+        return Object.assign(base, {
+          title: '账号已停用',
+          desc: '当前使用的服务账号已被停用。',
+          hint: '请联系管理员处理后再试。',
+        })
+      }
+      return Object.assign(base, {
+        title: '没有访问权限',
+        desc: '服务拒绝了本次请求。',
+        hint: '请点「重试」；若持续失败，请把技术信息发给管理员。',
+      })
+
+    case 'HTTP_404':
+      return Object.assign(base, {
+        title: '智能体不存在',
+        desc: '要进入的智能体已经被删除或改名。',
+        hint: '请联系管理员确认可用智能体，或稍后重试。',
+      })
+
+    default:
+      if (/^HTTP_5/.test(code)) {
+        return Object.assign(base, {
+          title: '服务暂时不可用',
+          desc: 'NanZi 服务端出现了异常，通常稍等一会儿就好。',
+          hint: '请稍后点「重试」；若持续失败，请联系技术人员。',
+        })
+      }
+      return Object.assign(base, {
+        title: '暂时无法进入',
+        desc: '服务返回了预期之外的结果。',
+        hint: '请稍后点「重试」；若持续失败，请把技术信息发给管理员。',
+      })
+  }
+}
+```
+
+页面分三段展示，并把 `code` + `detail` 放在一行**可长按复制**的小字里：
+
+```xml
+<text class="state-title">{{error.title}}</text>
+<text class="state-desc">{{error.desc}}</text>
+<text wx:if="{{error.hint}}" class="state-hint">{{error.hint}}</text>
+<text class="state-detail-text" user-select="{{true}}">{{error.code}}{{error.detail ? ' · ' + error.detail : ''}}</text>
+```
+
+> 💡 **这套「云函数回 code、页面翻文案」的分层是有意为之**：真正驱动 UI 分派的是 `code`，`detail` 是给人看的排查线索。
+> ⚠️ 但要清楚：**上面按中文匹配 `detail` 的做法仍然是脆弱的**——平台哪天改一个字，分支就会静默退化成兜底文案，且不报错。彻底解决要靠平台提供**结构化错误码**，届时把这些正则换成按码判断即可。
+
 ---
 
 ## 八、域名配置
@@ -445,15 +548,18 @@ window.__wxjs_environment === 'miniprogram' || /miniProgram/i.test(navigator.use
 
 ## 九、常见问题与排错指南 (FAQ & Troubleshooting)
 
-### Q1: 云函数返回「微端未开启或未授权」，怎么定位？
+### Q1: 用户报「微端未开启 / 没有访问权限」，怎么定位？
 
-先看**平台返回的具体信息**（云函数日志里有原始响应）：
+**先别急着去查开关。** 这几类 403 症状相似、病根完全不同。云函数日志里有平台返回的原始 `detail`，按它分流：
 
-| 平台信息 | 原因 | 处理 |
-| --- | --- | --- |
-| 「微信小程序微端未开启」 | 开关未打开 | [第四章第 1 节](#1-打开微端开关) |
-| 含 `Permission required` | 网关账号**缺少 `POST:/api/v1/embed/tickets`** | [第四章第 2 节](#2-建专用网关账号并授权) |
-| 其他 403 | 账号被禁用 | 让管理员解禁 |
+| 平台 `detail` | 真实原因 | 影响范围 | 处理 |
+| --- | --- | --- | --- |
+| 「微信小程序微端未开启」 | 开关没打开 | 全员 | [第四章第 1 节](#1-打开微端开关) |
+| 含 `Permission required` | 网关账号**缺少 `POST:/api/v1/embed/tickets`** | 全员 | [第四章第 2 节](#2-建专用网关账号并授权) |
+| 「账号已被禁用」/「目标用户账号已被禁用…」 | **是这一个用户**的账号被停用了，不是全局故障 | 仅此一人 | 到用户管理里启用该账号（或确认停用是预期行为） |
+| 「目标用户不存在」 | 传了不存在的 `agent_id` | 该用户 | 去掉 `agent_id` 或换一个 |
+
+> ⚠️ **最常见的误判**：把「账号已被禁用」当成「微端未开启」，跑去查 `miniprogram_enabled`，结果发现是开着的——**这两件事的成因、影响范围（单人 vs 全员）、修复动作都不一样**。所以页面侧必须把 403 分开提示，否则这个误判会在每次有用户被停用时重演一遍。做法见[第七章第 5 节](#5-把错误翻译成用户看得懂的话)。
 
 ### Q2: 云函数报「未配置 NANZI_BASE_URL / NANZI_API_KEY」？
 
