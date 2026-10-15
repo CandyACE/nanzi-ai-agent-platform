@@ -17,6 +17,7 @@ from app.schemas.permission import UserPermissionsResponse, PermissionUpdate
 from app.services.permission_service import PermissionService
 from app.models.agent import AIAgent
 from app.models.permission import ResourcePermission, Role, UserRoleRelation
+from app.models.wechat_binding import WechatBinding
 from app.services.sso_user import LaplacePortalApiClient
 from app.services.db_connection_service import DbConnectionService
 import json
@@ -445,7 +446,18 @@ async def list_users(
     # Page
     stmt = stmt.offset((page - 1) * size).limit(size)
     rows = (await db.execute(stmt)).scalars().all()
-    
+
+    # 本页用户的微信绑定情况：一次 IN 查询，不要逐行查
+    page_user_ids = [row.id for row in rows]
+    bound_user_ids: set = set()
+    if page_user_ids:
+        bound_rows = await db.execute(
+            select(WechatBinding.user_id)
+            .where(WechatBinding.user_id.in_(page_user_ids))
+            .distinct()
+        )
+        bound_user_ids = {r[0] for r in bound_rows.all()}
+
     items = []
     for row in rows:
         role_ids = [r.id for r in row.roles] if row.roles else []
@@ -468,6 +480,7 @@ async def list_users(
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             "last_login_at": row.last_login_at.strftime("%Y-%m-%d %H:%M:%S") if row.last_login_at else None,
+            "wechat_bound": row.id in bound_user_ids,
             "allowed_resources": []
         })
 
@@ -477,6 +490,92 @@ async def list_users(
         "size": size,
         "items": items
     }
+
+# ---------------------------------------------------------------------------
+# 微信绑定（小程序微端，见 spec §7.6）
+# ---------------------------------------------------------------------------
+
+def mask_openid(value: Optional[str]) -> Optional[str]:
+    """openid/unionid 脱敏：保留首 6 尾 4，中间以 **** 代替。
+
+    它不是凭证（拿它无法登录），但能关联到具体微信用户，列表页没必要裸奔；
+    需要明文排查时走 /wechat-bindings/{id}/identity。
+    """
+    if not value:
+        return value
+    if len(value) <= 12:
+        return value[:3] + "****"
+    return f"{value[:6]}****{value[-4:]}"
+
+
+@router.get("/wechat-bindings")
+async def list_wechat_bindings(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=200),
+    search: Optional[str] = None,
+    appid: Optional[str] = None,
+    admin: dict = Depends(require_permission("menu", "menu:system:users")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """微信身份绑定记录列表。
+
+    一行 = 一条绑定记录，而不是一行一个用户：同一账号将来可能挂多个微信身份
+    （多小程序 / 网站应用），按绑定行展示才不会丢信息。
+    """
+    stmt = (
+        select(WechatBinding, User)
+        .join(User, User.id == WechatBinding.user_id)
+        .order_by(desc(WechatBinding.last_login_at), desc(WechatBinding.id))
+    )
+
+    if appid:
+        stmt = stmt.where(WechatBinding.appid == appid)
+    if search:
+        stmt = stmt.where(
+            (User.user_name.like(f"%{search}%")) | (User.real_name.like(f"%{search}%"))
+        )
+
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar()
+
+    rows = (await db.execute(stmt.offset((page - 1) * size).limit(size))).all()
+
+    items = []
+    for binding, user in rows:
+        items.append({
+            "id": binding.id,
+            "user_id": user.id,
+            "user_name": user.user_name,
+            "real_name": user.real_name,
+            "appid": binding.appid,
+            "openid_masked": mask_openid(binding.openid),
+            "unionid_masked": mask_openid(binding.unionid),
+            "created_at": binding.created_at.strftime("%Y-%m-%d %H:%M:%S") if binding.created_at else None,
+            "last_login_at": binding.last_login_at.strftime("%Y-%m-%d %H:%M:%S") if binding.last_login_at else None,
+        })
+
+    return {"total": total, "page": page, "size": size, "items": items}
+
+
+@router.get("/wechat-bindings/{binding_id}/identity")
+async def get_wechat_binding_identity(
+    binding_id: int,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """取单条绑定的完整 openid/unionid，供对照云函数日志排查。
+
+    单独成接口、且权限升到编辑级，而不是给列表加 include_raw 参数——
+    后者一次请求就把整页明文全下发，脱敏等于白做。
+    """
+    binding = await db.get(WechatBinding, binding_id)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="绑定记录不存在")
+
+    logger.info(
+        "管理员读取微信绑定明文身份: binding_id=%s user_id=%s operator=%s",
+        binding_id, binding.user_id, admin.get("user_name"),
+    )
+    return {"openid": binding.openid, "unionid": binding.unionid}
 
 @router.post("/users")
 async def create_user(
