@@ -30,6 +30,8 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
   const sandboxWorkspaceStartedAt = ref<string | null>(null);
   const sandboxWorkspaceUptimeSeconds = ref<number | null>(null);
   const showSandboxStopConfirm = ref(false);
+  /** 手动刷新（GET /status）进行中：供刷新按钮转圈与防重复点击，与容器 starting/stopping 无关 */
+  const sandboxWorkspaceRefreshing = ref(false);
   const showDockerTerminal = ref(false);
   const showK8sTerminal = ref(false);
 
@@ -75,12 +77,20 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
   };
 
   let sandboxStatusRefreshInFlight = false;
+  //: 本地/内网接口常在几十毫秒内返回，转圈会一闪而过；给一个最短可见时长，让"点到了"这件事可见。
+  const SANDBOX_REFRESH_MIN_SPIN_MS = 400;
 
   const refreshSandboxWorkspaceStatus = async (showFeedback = false) => {
     if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-    if (sandboxStatusRefreshInFlight) return;
+    if (sandboxStatusRefreshInFlight) {
+      // 防重入要保留，但不能静默：再点一次时给一句反馈，否则用户会以为"点了没反应"
+      if (showFeedback) showToast("正在刷新沙箱状态，请稍候…", "info");
+      return;
+    }
     sandboxStatusRefreshInFlight = true;
+    sandboxWorkspaceRefreshing.value = true;
     const requestedConversationId = conversationId.value;
+    const spinStartedAt = Date.now();
     try {
       const response = await axios.get(
         `${sandboxWorkspaceBaseEndpoint.value}/status`,
@@ -122,6 +132,18 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
       if (conversationId.value === requestedConversationId) {
         sandboxWorkspaceStatusLoaded.value = true;
       }
+      // 转圈至少可见 SANDBOX_REFRESH_MIN_SPIN_MS，否则接口太快时看不出刷新发生过；
+      // 只对手动刷新生效——watch/polling 触发的内部刷新是流程的一环（后面还紧跟自动预热），
+      // 不该为了动画被拖慢。
+      if (showFeedback) {
+        const elapsed = Date.now() - spinStartedAt;
+        if (elapsed < SANDBOX_REFRESH_MIN_SPIN_MS) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, SANDBOX_REFRESH_MIN_SPIN_MS - elapsed),
+          );
+        }
+      }
+      sandboxWorkspaceRefreshing.value = false;
       sandboxStatusRefreshInFlight = false;
     }
   };
@@ -392,6 +414,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
     showK8sTerminal,
     resetSandboxWorkspaceState,
     refreshSandboxWorkspaceStatus,
+    sandboxWorkspaceRefreshing,
     pollSandboxWorkspaceUntilRunning,
     maybeAutoWarmSandbox,
     ensureSandboxWorkspace,

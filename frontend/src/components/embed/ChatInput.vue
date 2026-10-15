@@ -139,6 +139,8 @@ const props = withDefaults(defineProps<{
   sandboxWorkspaceError?: string;
   /** 沙箱空闲回收分钟数（后端按 sandbox_idle_time 解析，与回收器同源；缺省时只说「空闲超时」不报数字） */
   sandboxIdleMinutes?: number | null;
+  /** 沙箱状态手动刷新进行中（刷新按钮转圈并禁用；与容器 starting/stopping 状态无关） */
+  sandboxRefreshing?: boolean;
   /** 当前会话是否开启反幻觉校验 */
   enableGrounding?: boolean;
   /** 反幻觉阻断模式：严格缓冲 | 实时撤回 */
@@ -2387,11 +2389,12 @@ defineExpose({
                               </button>
                               <button
                                 type="button"
+                                :disabled="sandboxRefreshing"
                                 class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                                 title="手动检测刷新沙箱状态（创建中/停止中也允许查询）"
                                 @click.stop="emit('refresh-sandbox-workspace', true)"
                               >
-                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping' }" aria-hidden="true" />
+                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': sandboxRefreshing || (sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping' }" aria-hidden="true" />
                                 <span>刷新</span>
                               </button>
 
