@@ -89,15 +89,26 @@ def test_web_preview_panel_supports_scaled_page_preview():
 
 
 def test_web_preview_panel_restricted_embed_handling():
+    """受限兜底卡片契约：判定依据改为「后端实测 + 名单降级」，组件只渲染结论。
+
+    域名名单迁到 ``frontend/src/utils/webPreviewEmbed.ts``，且**只在实测拿不到
+    结论时**作为降级预判；组件不得再自行按域名拦人——那份名单正是
+    ``www.baidu.com`` 被误拦、用户点「仍尝试加载」又能正常打开的根因。
+    """
     source = _source()
-    assert "KNOWN_RESTRICTED_DOMAINS" in source
-    assert "pypi.org" in source
-    assert "github.com" in source
-    assert "isLikelyRestricted" in source
+    helper = (ROOT / "frontend/src/utils/webPreviewEmbed.ts").read_text(encoding="utf-8")
+
+    assert "KNOWN_RESTRICTED_DOMAINS" not in source, "组件不得再自行维护域名名单"
+    assert "KNOWN_RESTRICTED_DOMAINS" in helper
+    assert "pypi.org" in helper
+    assert "github.com" in helper
+    assert "isKnownRestrictedHost" in helper
+
+    assert "resolveEmbedDecision" in source
     assert "shouldShowRestrictedCard" in source
-    assert "该站点通常禁止内嵌预览" in source
     assert "仍尝试在内嵌框架中加载" in source
     assert "在新标签页打开网页" in source
+    assert "该站点通常禁止内嵌预览" not in source, "绝对化文案已由「实测/预判」双口径取代"
 
 
 def test_every_new_tab_link_closes_the_panel():

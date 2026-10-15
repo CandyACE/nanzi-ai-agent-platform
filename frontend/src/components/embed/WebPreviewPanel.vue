@@ -134,6 +134,13 @@
             <span class="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-gray-400">URL</span>
             <span v-if="safeUrl" class="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-600 dark:text-gray-300" :title="safeUrl">{{ safeUrl }}</span>
             <span v-else class="min-w-0 flex-1 text-xs text-gray-400">没有可预览的 HTTP(S) 地址</span>
+            <span
+              v-if="safeUrl && probing"
+              class="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
+              title="正在由后端实测目标站点的响应头；实测期间先按可内嵌展示，避免误拦"
+            >
+              实测内嵌策略中…
+            </span>
             <label v-if="safeUrl" class="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-gray-500 dark:text-gray-400">
               <span>缩放</span>
               <select
@@ -185,11 +192,27 @@
                   <span>{{ targetHostname }}</span>
                 </div>
                 <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">
-                  该站点通常禁止内嵌预览
+                  {{ restrictedDecision.title }}
                 </h3>
                 <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                  目标网站声明了安全防嵌套策略（如 X-Frame-Options 或 CSP），现代浏览器会主动拦截在此区域的内嵌展示，推荐直接在新标签页中访问。
+                  {{ restrictedDecision.detail }}
                 </p>
+                <p class="mt-3 text-[10px] font-semibold tracking-wider text-gray-400">
+                  依据：{{ restrictedDecision.basis === 'probe' ? '平台实测' : '经验预判' }}
+                </p>
+                <dl
+                  v-if="restrictedSignals.length"
+                  class="mt-3 w-full space-y-1 rounded-lg bg-gray-50 p-2 text-left dark:bg-gray-800/60"
+                >
+                  <div
+                    v-for="signal in restrictedSignals"
+                    :key="signal.name"
+                    class="flex min-w-0 gap-1.5 text-[10px] leading-relaxed"
+                  >
+                    <dt class="shrink-0 font-mono font-semibold text-gray-500 dark:text-gray-400">{{ signal.name }}</dt>
+                    <dd class="min-w-0 break-all font-mono text-gray-600 dark:text-gray-300">{{ signal.value }}</dd>
+                  </div>
+                </dl>
                 <div class="mt-6 flex w-full flex-col gap-2.5">
                   <a
                     :href="safeUrl"
@@ -211,6 +234,15 @@
                     @click="forceShowIframe = true"
                   >
                     仍尝试在内嵌框架中加载
+                  </button>
+                  <button
+                    type="button"
+                    class="text-[11px] font-semibold text-blue-600 transition hover:text-blue-500 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-blue-300 dark:hover:text-blue-200"
+                    :disabled="probing"
+                    title="忽略缓存，重新由后端实测目标站点的响应头"
+                    @click="recheckEmbed"
+                  >
+                    {{ probing ? '实测中…' : '重新检测' }}
                   </button>
                 </div>
               </div>
@@ -255,6 +287,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { isBrowserOpenableUrl } from '@/utils/messageBrowserLinks';
+import {
+  hostnameOf,
+  resolveEmbedDecision,
+  type EmbedProbeOutcome,
+} from '@/utils/webPreviewEmbed';
+import { checkWebPreviewEmbed } from '@/api/webPreview';
 
 const props = defineProps<{
   visible: boolean;
@@ -296,53 +334,81 @@ const WEB_PREVIEW_ZOOM_STORAGE_KEY = 'nanzi_web_preview_zoom_v2';
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024);
 let panelResizeObserver: ResizeObserver | null = null;
 
-const KNOWN_RESTRICTED_DOMAINS = [
-  'pypi.org',
-  'github.com',
-  'gitlab.com',
-  'google.com',
-  'baidu.com',
-  'zhihu.com',
-  'bilibili.com',
-  'x.com',
-  'twitter.com',
-  'weibo.com',
-  'stackoverflow.com',
-  'reddit.com',
-  'taobao.com',
-  'jd.com',
-  'qq.com',
-  'weixin.qq.com',
-  'medium.com',
-  'linkedin.com',
-  'notion.so',
-];
-
 const forceShowIframe = ref(false);
+
+/** 后端实测结论；`null` 表示尚未取得（探测中或探测失败）。 */
+const probeOutcome = ref<EmbedProbeOutcome | null>(null);
+/** 实测进行中：期间一律乐观渲染 iframe，避免「先弹卡片、稍后才显示网页」。 */
+const probing = ref(false);
+/** 同一 URL 的实测结论在会话内复用，避免来回切换时反复出网。 */
+const probeCache = new Map<string, EmbedProbeOutcome>();
+let probeToken = 0;
 
 const safeUrl = computed(() => {
   const value = props.url?.trim() || '';
   return isBrowserOpenableUrl(value) ? value : '';
 });
 
-const targetHostname = computed(() => {
-  if (!safeUrl.value) return '';
-  try {
-    return new URL(safeUrl.value).hostname.toLowerCase();
-  } catch {
-    return '';
+const targetHostname = computed(() => hostnameOf(safeUrl.value));
+
+/**
+ * 是否展示受限提示卡片：**实测结论优先，经验名单只在拿不到实测时降级使用**。
+ *
+ * 这是本次修复的核心：旧实现只看硬编码名单，`www.baidu.com` 因此被误拦。
+ */
+const restrictedDecision = computed(() =>
+  resolveEmbedDecision(targetHostname.value, probeOutcome.value, { pending: probing.value }),
+);
+
+const shouldShowRestrictedCard = computed(
+  () => restrictedDecision.value.blocked && !forceShowIframe.value,
+);
+
+/** 判定依据的响应头片段（如 `x-frame-options: deny`），让结论可被用户核对。 */
+const restrictedSignals = computed(() =>
+  Object.entries(restrictedDecision.value.signals).map(([name, value]) => ({ name, value })),
+);
+
+/**
+ * 由后端实测目标站点是否允许内嵌。
+ *
+ * 实测失败不拦人：统一折算成「未取得结论」，再由经验名单降级预判。
+ */
+const probeEmbeddable = async (url: string, options: { force?: boolean } = {}) => {
+  if (!url) {
+    probeOutcome.value = null;
+    return;
   }
-});
+  if (!options.force) {
+    const cached = probeCache.get(url);
+    if (cached) {
+      probeOutcome.value = cached;
+      return;
+    }
+  }
+  const token = ++probeToken;
+  probing.value = true;
+  try {
+    const outcome = await checkWebPreviewEmbed(url);
+    if (token !== probeToken) return;
+    probeCache.set(url, outcome);
+    probeOutcome.value = outcome;
+  } catch {
+    if (token !== probeToken) return;
+    probeOutcome.value = { embeddable: null, reason: '实测请求异常' };
+  } finally {
+    if (token === probeToken) probing.value = false;
+  }
+};
 
-const isLikelyRestricted = computed(() => {
-  const host = targetHostname.value;
-  if (!host) return false;
-  return KNOWN_RESTRICTED_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
-});
-
-const shouldShowRestrictedCard = computed(() => {
-  return isLikelyRestricted.value && !forceShowIframe.value;
-});
+/** 忽略缓存重新实测：目标站点的防嵌套策略随时可能调整。 */
+const recheckEmbed = () => {
+  const url = safeUrl.value;
+  if (!url) return;
+  probeCache.delete(url);
+  forceShowIframe.value = false;
+  void probeEmbeddable(url, { force: true });
+};
 
 const frameScaleStyle = computed(() => {
   const scale = effectiveZoom.value / 100;
@@ -473,6 +539,12 @@ const resetWidth = () => {
 
 const reload = () => {
   frameKey.value += 1;
+  // 刷新语义包含「重新实测」：目标站点可能刚好调整了防嵌套策略。
+  const url = safeUrl.value;
+  if (url) {
+    probeCache.delete(url);
+    void probeEmbeddable(url, { force: true });
+  }
 };
 
 const syncViewportWidth = () => {
@@ -509,6 +581,23 @@ watch(() => props.url, () => {
   forceShowIframe.value = false;
   frameKey.value += 1;
 });
+
+watch(
+  [() => props.visible, () => safeUrl.value],
+  ([visible, url]) => {
+    if (!visible || !url) {
+      probeOutcome.value = null;
+      probing.value = false;
+      return;
+    }
+    // 关键：先清空结论，让探测期间乐观渲染 iframe。
+    // 否则命中经验名单的站点（如 baidu.com）会先弹卡片、实测回来后才变成网页，
+    // 正是「先拦、点了又能加载」这一困惑的来源。
+    probeOutcome.value = null;
+    void probeEmbeddable(url);
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   loadCustomWidth();

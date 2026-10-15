@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse
+from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview
 
 portal_router = APIRouter()
 
@@ -95,3 +95,7 @@ portal_router.include_router(notifications.router, prefix="/notifications", tags
 
 # 23. 站内消息中心
 portal_router.include_router(inbox.router, prefix="/inbox", tags=["站内消息"], dependencies=[Depends(require_api_key)])
+
+# 24. 网页预览内嵌实测 (Web Preview Embed Check)
+# 由服务端读取目标站点响应头判定「能否内嵌」，替代前端按域名名单猜测（曾误拦 baidu.com）。
+portal_router.include_router(web_preview.router, prefix="/web-preview", tags=["网页预览"], dependencies=[Depends(require_api_key)])
