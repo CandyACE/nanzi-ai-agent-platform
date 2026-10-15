@@ -3,8 +3,14 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.dependencies import require_api_key, get_db_session
-from app.services.embed_service import EmbedService
+from app.core.dependencies import require_api_key, get_db_session, require_permission
+from app.services.embed_service import EmbedService, TICKET_TTL_SECONDS
+from app.services.wechat_miniprogram_service import (
+    MiniprogramIdentityError,
+    derive_instance_id,
+    resolve_or_create_user,
+    warn_if_new_account_burst,
+)
 from app.schemas.response import StandardResponse
 
 logger = logging.getLogger(__name__)
@@ -65,6 +71,41 @@ class SessionTokenResponseData(BaseModel):
     )
 
 
+class MiniprogramSessionRequest(BaseModel):
+    openid: str = Field(
+        ...,
+        description=(
+            "微信用户在该小程序下的 openid。由小程序云函数用 cloud.getWXContext() 取得；"
+            "平台不接收浏览器直接传入的值（该接口仅对持 API Key 的云函数开放）。"
+        ),
+        json_schema_extra={"example": "oABC1234567890123456789012"},
+    )
+    appid: str = Field(
+        ...,
+        description="小程序 AppID",
+        json_schema_extra={"example": "wx1ca87185956d0071"},
+    )
+    unionid: Optional[str] = Field(None, description="微信开放平台 unionid，可空")
+    agent_id: Optional[str] = Field(None, description="可选：锁定智能体 ID")
+
+
+class MiniprogramIdentitySummary(BaseModel):
+    user_id: int = Field(..., description="平台账号 ID")
+    user_name: str = Field(..., description="平台账号名（自 openid 派生）")
+    is_new: bool = Field(..., description="本次调用是否新建了账号")
+
+
+class MiniprogramSessionResponseData(BaseModel):
+    ticket: str = Field(..., description="一次性短时 Ticket")
+    expires_in: int = Field(..., description="Ticket 有效时长（秒）")
+    instance_id: str = Field(
+        ..., description="前端会话实例标识（逐 openid 派生，用于会话分桶）"
+    )
+    user: MiniprogramIdentitySummary = Field(
+        ..., description="身份摘要（不含 openid / unionid / API Key）"
+    )
+
+
 @router.post(
     "/tickets",
     response_model=StandardResponse[TicketResponseData],
@@ -97,6 +138,71 @@ async def create_embed_ticket(
     except Exception as e:
         logger.error("Failed to create embed ticket: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create embed ticket")
+
+
+@router.post(
+    "/miniprogram/session",
+    response_model=StandardResponse[MiniprogramSessionResponseData],
+    summary="小程序微端：按 openid 自动开户并签发嵌入凭证",
+    description=(
+        "供微信小程序云函数调用（云函数用 cloud.getWXContext() 取得 openid 后转发）。"
+        "平台按 (appid, openid) 解析账号；未命中且带了 unionid 则回退 unionid；仍未命中则自动开户、"
+        "挂「小程序用户」角色，最后签发一次性 Ticket。"
+        "权限复用 POST:/api/v1/embed/tickets —— /embed 路径在 V1 白名单内、自动校验不生效，"
+        "故此处必须显式校验，且必须前置于建号，否则会成为刷号入口。"
+    ),
+    dependencies=[Depends(require_permission("api", "POST:/api/v1/embed/tickets"))],
+)
+async def create_miniprogram_session(
+    payload: MiniprogramSessionRequest,
+    current_user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    from app.services.config_service import ConfigService
+
+    if await ConfigService.get("miniprogram_enabled") != "true":
+        raise HTTPException(status_code=403, detail="微信小程序微端未开启")
+
+    try:
+        identity = await resolve_or_create_user(
+            openid=payload.openid,
+            appid=payload.appid,
+            unionid=payload.unionid,
+            db=db,
+        )
+    except MiniprogramIdentityError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    if identity["is_new"]:
+        # 防雪崩：只告警、不阻断（见 service 中的 warn_if_new_account_burst）
+        await warn_if_new_account_burst()
+
+    try:
+        ticket_data = await EmbedService.create_ticket(
+            operator_user=current_user,
+            target_user_id=identity["user_id"],
+            agent_id=payload.agent_id,
+            expires_in=TICKET_TTL_SECONDS,
+            db=db,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Failed to create miniprogram session ticket: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create miniprogram session")
+
+    return StandardResponse(
+        data=MiniprogramSessionResponseData(
+            ticket=ticket_data["ticket"],
+            expires_in=ticket_data["expires_in"],
+            instance_id=derive_instance_id(payload.openid),
+            user=MiniprogramIdentitySummary(**identity),
+        )
+    )
 
 
 @public_router.post(

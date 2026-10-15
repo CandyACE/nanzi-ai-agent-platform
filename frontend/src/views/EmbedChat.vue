@@ -494,6 +494,11 @@
         @select-knowledge-base="openKnowledgePortal"
         @open-workspace="openWorkspaceDrawer"
       />
+      <!-- 小程序宿主：已授权智能体为空时的兜底（浏览器/iframe 既有行为不受影响） -->
+      <p
+        v-if="isMiniprogramHost() && !isLoadingAgents && allowedAgents.length === 0"
+        class="text-sm text-gray-500 dark:text-gray-400 text-center px-4 py-4"
+      >{{ MINIPROGRAM_NO_AGENT_HINT }}</p>
       <!-- Start of Conversation Indicator -->
       <div v-if="!hasMoreHistory && messages.length > 0" class="w-full flex flex-col items-center py-8 opacity-60">
         <div class="w-8 h-8 rounded-full bg-gray-50 dark:bg-gray-800 flex items-center justify-center mb-2 border border-gray-100 dark:border-gray-700">
@@ -8489,6 +8494,43 @@ const setColor = (color: string) => {
   activeColor.value = color;
   applyTheme(config.theme, { "--primary-color": color });
 };
+// ---------------------------------------------------------------------------
+// 微信小程序宿主适配
+// ---------------------------------------------------------------------------
+// 小程序 web-view 内不能触发 <a download>（会被微信拦截），
+// 且 H5 → 小程序的唯一【即时】通道是 wx.miniProgram.*：
+// wx.miniProgram 的 postMessage 只在后退/组件销毁/分享/复制链接时批量触发，
+// 不具备实时性，因此本文件不得用它做实时通知。
+const MINIPROGRAM_FILE_PAGE = '/pages/file/file'
+const MINIPROGRAM_CHAT_PAGE = '/pages/chat/chat'
+const MINIPROGRAM_NO_AGENT_HINT = '尚未开放智能体，请联系管理员'
+
+/** 是否运行在微信小程序 web-view 内 */
+const isMiniprogramHost = (): boolean => {
+  if (typeof window === 'undefined') return false
+  const env = (window as any).__wxjs_environment
+  if (env === 'miniprogram') return true
+  return /miniProgram/i.test(navigator.userAgent || '')
+}
+
+/** 交给小程序原生页打开文件；返回 true 表示已接管 */
+const openFileInMiniapp = (url: string): boolean => {
+  const wx = (window as any).wx
+  if (!isMiniprogramHost() || !wx?.miniProgram?.navigateTo || !url) return false
+  wx.miniProgram.navigateTo({
+    url: `${MINIPROGRAM_FILE_PAGE}?url=${encodeURIComponent(url)}`,
+  })
+  return true
+}
+
+/** 让小程序重新签票并回到聊天页；返回 true 表示已接管 */
+const relaunchMiniappChat = (instanceId?: string): boolean => {
+  const wx = (window as any).wx
+  if (!isMiniprogramHost() || !wx?.miniProgram?.reLaunch) return false
+  const query = instanceId ? `?instance_id=${encodeURIComponent(instanceId)}` : ''
+  wx.miniProgram.reLaunch({ url: `${MINIPROGRAM_CHAT_PAGE}${query}` })
+  return true
+}
 // --- Actions ---
 const copyMessage = async (content: string) => {
   if (!content) return;
@@ -8515,6 +8557,10 @@ const exportData = async (traceId: string, format = 'xlsx') => {
     }
     const href = resolveGeneratedFileHref(downloadUrl);
     const filename: string = response.data?.filename || `nanzi_export_${traceId.slice(0, 8)}.${format}`;
+    // 小程序 web-view 内 <a download> 会被微信拦截，改交原生文件页处理
+    if (openFileInMiniapp(href)) {
+      return;
+    }
     const link = document.createElement('a');
     link.href = href;
     link.setAttribute('download', filename);
@@ -8807,6 +8853,10 @@ const handleChatBIResultAction = async (
     });
     const artifact = res.data?.data?.artifact;
     if (artifact?.download_url) {
+      // 小程序 web-view 内 <a download> 会被微信拦截，改交原生文件页处理
+      if (openFileInMiniapp(artifact.download_url)) {
+        return;
+      }
       const link = document.createElement("a");
       link.href = artifact.download_url;
       link.download = artifact.filename || "ChatBI业务简报.docx";
@@ -10499,6 +10549,10 @@ onMounted(() => {
         fetchAllowedAgents();
         fetchSlashCommands();
       } else {
+        // 小程序宿主：凭证失效/未拿到时，让小程序重新签票回聊天页，避免停在白屏
+        if (relaunchMiniappChat(config.instanceId)) {
+          return;
+        }
         authFailureReason.value = resolveTicketFailureReason();
         hasPermission.value = false;
         postMessageToHost({ type: "INIT_FAILURE", reason: authFailureReason.value });

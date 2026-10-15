@@ -1,5 +1,6 @@
 """Contract: AgentScope runtime injection toggles appear in System Config."""
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,7 +12,12 @@ PG_MIG = ROOT / "db-prod-pg/V19-add_agentscope_injection_config.sql"
 def test_system_config_exposes_agentscope_injection_toggles():
     assert "agentscope_inject_runtime_state" in SYSTEM_CONFIG
     assert "agentscope_inject_time_interval_hours" in SYSTEM_CONFIG
-    assert "agentscope_inject_runtime_state'].includes" in SYSTEM_CONFIG
+    # 必须是「开关白名单的成员」。原断言写作 "'..._state'].includes"，等价于要求它是
+    # 数组的**最后一个元素**——只要往后追加任何开关都会误报（miniprogram_enabled 就踩过）。
+    assert re.search(
+        r"\[[^\]]*'agentscope_inject_runtime_state'[^\]]*\]\.includes\(item\.key\)",
+        SYSTEM_CONFIG,
+    ), "agentscope_inject_runtime_state 应出现在某个开关白名单数组里"
     # 时间间隔用数字控件
     assert "item.key === 'agentscope_inject_time_interval_hours'" in SYSTEM_CONFIG
     assert 'type="number"' in SYSTEM_CONFIG

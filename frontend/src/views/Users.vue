@@ -143,6 +143,7 @@
         v-for="tab in [
           { id: 'list', label: '用户列表' },
           { id: 'review', label: '待审核' },
+          { id: 'wechat', label: '微信绑定' },
         ]"
         :key="tab.id"
         type="button"
@@ -152,7 +153,7 @@
             ? 'border-primary text-primary'
             : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
         "
-        @click="switchView(tab.id as 'list' | 'review')"
+        @click="switchView(tab.id as 'list' | 'review' | 'wechat')"
       >
         {{ tab.label }}
         <span
@@ -309,6 +310,89 @@
       </template>
     </div>
 
+    <!-- 微信绑定视图：一行 = 一条绑定记录（同一账号将来可能挂多个微信身份） -->
+    <template v-if="activeView === 'wechat'">
+      <div class="flex flex-wrap items-center gap-2">
+        <input
+          v-model="bindingSearch"
+          type="search"
+          placeholder="搜索用户名 / 姓名"
+          class="w-64 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:ring-2 focus:ring-primary/30"
+          @keyup.enter="bindingPage = 1; fetchBindings()"
+        />
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          @click="bindingPage = 1; fetchBindings()"
+        >查询</button>
+      </div>
+
+      <div class="bg-white border border-gray-200 shadow-sm rounded-lg">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">用户</th>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">来源 AppID</th>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">openid</th>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">unionid</th>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">绑定时间</th>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">最后登录</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+              <tr v-for="row in bindings" :key="row.id" class="hover:bg-gray-50/80">
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <div class="text-sm font-medium text-gray-900">{{ row.user_name }}</div>
+                  <div class="text-xs text-gray-500">#{{ row.user_id }}</div>
+                </td>
+                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-700">{{ row.appid }}</td>
+                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-700">
+                  <span class="font-mono">{{ row.openid_masked }}</span>
+                  <button
+                    type="button"
+                    class="ml-2 text-xs text-primary hover:underline"
+                    title="复制完整 openid（会记入日志）"
+                    @click="copyBindingIdentity(row)"
+                  >复制完整值</button>
+                </td>
+                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-700">
+                  <span class="font-mono">{{ row.unionid_masked || '—' }}</span>
+                </td>
+                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-500">{{ row.created_at || '—' }}</td>
+                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-500">{{ row.last_login_at || '—' }}</td>
+              </tr>
+              <tr v-if="!bindingLoading && bindings.length === 0">
+                <td colspan="6" class="px-5 py-10 text-center text-sm text-gray-500">
+                  暂无微信绑定记录
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex items-center justify-between border-t border-gray-200 px-5 py-3">
+          <div class="text-sm text-gray-600">
+            共 {{ bindingTotal }} 条，第 {{ bindingPage }}/{{ bindingTotalPages || 1 }} 页
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              :disabled="bindingPage <= 1"
+              @click="bindingPage > 1 && (bindingPage--, fetchBindings())"
+            >上一页</button>
+            <button
+              type="button"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              :disabled="bindingPage >= bindingTotalPages"
+              @click="bindingPage < bindingTotalPages && (bindingPage++, fetchBindings())"
+            >下一页</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- ===================== 用户列表视图 ===================== -->
     <template v-if="activeView === 'list'">
     <!-- Loading -->
@@ -398,6 +482,11 @@
                 <td class="px-5 py-4 whitespace-nowrap">
                   <div class="min-w-0">
                     <div class="flex items-center gap-1.5 min-w-0">
+                      <span
+                        v-if="user.wechat_bound"
+                        class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50"
+                        title="该账号已绑定微信（小程序微端）"
+                      >微信</span>
                       <span class="text-sm font-semibold text-gray-900 truncate max-w-[14rem]" :title="user.user_name">
                         {{ user.user_name }}
                       </span>
@@ -2412,7 +2501,7 @@ const totalPages = ref(0);
 // --- 待审核视图 ---
 // 数据源与主列表同一个接口（GET /users?status=2），只是换成卡片渲染并收起无关操作。
 // 不复用主表格：批量勾选、API Key、角色编辑、2FA 徽标对「待审核」全是噪音。
-const activeView = ref<"list" | "review">("list");
+const activeView = ref<"list" | "review" | "wechat">("list");
 const pendingCount = ref(0);
 const reviewApproveTarget = ref<any>(null);
 const reviewRejectTarget = ref<any>(null);
@@ -2489,7 +2578,7 @@ const fetchPendingCount = async () => {
   }
 };
 
-const switchView = async (view: "list" | "review") => {
+const switchView = async (view: "list" | "review" | "wechat") => {
   if (activeView.value === view) return;
   activeView.value = view;
   closeMenus();
@@ -2499,6 +2588,11 @@ const switchView = async (view: "list" | "review") => {
     // 待审核视图固定按 status=2 拉取；离开时还原，避免污染主列表筛选
     statusFilter.value = "2";
     await Promise.all([fetchUsers(), fetchPendingCount()]);
+  } else if (view === "wechat") {
+    // 同样要还原 statusFilter，否则会把 status=2 带到绑定视图
+    statusFilter.value = "";
+    bindingPage.value = 1;
+    await fetchBindings();
   } else {
     statusFilter.value = "";
     await fetchUsers();
@@ -3313,6 +3407,45 @@ const fetchUsers = async () => {
     showToast("获取列表失败", "error");
   } finally {
     loading.value = false;
+  }
+};
+
+// --- 微信绑定视图（spec §7.6）---
+// 一行 = 一条绑定记录：同一账号将来可能挂多个微信身份，不能按用户聚合。
+const bindings = ref<any[]>([]);
+const bindingPage = ref(1);
+const bindingSize = ref(15);
+const bindingTotal = ref(0);
+const bindingTotalPages = ref(0);
+const bindingSearch = ref("");
+const bindingLoading = ref(false);
+
+const fetchBindings = async () => {
+  bindingLoading.value = true;
+  try {
+    const params: any = { page: bindingPage.value, size: bindingSize.value };
+    if (bindingSearch.value) params.search = bindingSearch.value;
+    const response = await axios.get("/api/portal/management/wechat-bindings", { params });
+    bindings.value = response.data.items || [];
+    bindingTotal.value = response.data.total || 0;
+    bindingTotalPages.value = Math.ceil(bindingTotal.value / bindingSize.value);
+  } catch (e: any) {
+    showToast("获取微信绑定列表失败", "error");
+  } finally {
+    bindingLoading.value = false;
+  }
+};
+
+/** 取完整 openid 并复制：明文单独走接口，避免整页明文下发 */
+const copyBindingIdentity = async (row: any) => {
+  try {
+    const response = await axios.get(
+      `/api/portal/management/wechat-bindings/${row.id}/identity`
+    );
+    const ok = await copyToClipboard(response.data?.openid || "");
+    showToast(ok ? "已复制完整 openid" : "复制失败", ok ? "success" : "error");
+  } catch (e: any) {
+    showToast("读取完整 openid 失败", "error");
   }
 };
 

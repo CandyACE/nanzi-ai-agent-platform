@@ -5268,7 +5268,7 @@ onUnmounted(() => {
                                 class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                               >{{ item.description }}</p>
                            </div>
-                           <div v-else-if="['user_registration_enabled', 'embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'email_service_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
+                           <div v-else-if="['user_registration_enabled', 'embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'email_service_enabled', 'agentscope_inject_runtime_state', 'miniprogram_enabled'].includes(item.key)">
                              <div class="flex items-center">
                              <button
                                type="button"
