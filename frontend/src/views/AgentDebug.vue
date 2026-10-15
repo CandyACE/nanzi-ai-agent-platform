@@ -5213,6 +5213,7 @@ onUnmounted(() => {
           :sandbox-workspace-uptime-seconds="sandboxWorkspaceUptimeSeconds"
           :sandbox-workspace-error="sandboxWorkspaceError"
           :sandbox-backend="sandboxBackend"
+          :sandbox-idle-minutes="contextUsage?.sandbox_idle_minutes ?? null"
           @start-sandbox-workspace="ensureSandboxWorkspace"
           @refresh-sandbox-workspace="refreshSandboxWorkspaceStatus"
           @stop-sandbox-workspace="handleStopSandboxWorkspaceRequest"

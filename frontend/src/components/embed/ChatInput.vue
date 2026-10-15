@@ -137,6 +137,8 @@ const props = withDefaults(defineProps<{
   sandboxWorkspaceUptimeSeconds?: number | null;
   /** 沙箱错误信息 */
   sandboxWorkspaceError?: string;
+  /** 沙箱空闲回收分钟数（后端按 sandbox_idle_time 解析，与回收器同源；缺省时只说「空闲超时」不报数字） */
+  sandboxIdleMinutes?: number | null;
   /** 当前会话是否开启反幻觉校验 */
   enableGrounding?: boolean;
   /** 反幻觉阻断模式：严格缓冲 | 实时撤回 */
@@ -430,11 +432,21 @@ const sandboxStartButtonLabel = computed(() =>
     : (sandboxBackend.value === "k8s" ? "启动沙箱 Pod" : "启动容器"),
 );
 
-const sandboxReclaimHint = computed(() =>
-  sandboxBackend.value === "k8s"
-    ? "空闲 30m 自动回收沙箱"
-    : "空闲 30m 自动回收",
-);
+const sandboxReclaimHint = computed(() => {
+  // 回收时长必须来自后端按 sandbox_idle_time 的解析结果，绝不写死：
+  // 这里曾经硬编码「空闲 30m」，管理台改成 15 分钟后浮标仍在说 30m。
+  const raw = props.sandboxIdleMinutes;
+  const minutes =
+    typeof raw === "number" && Number.isFinite(raw) && raw > 0
+      ? String(Math.round(raw * 10) / 10)
+      : "";
+  const isK8s = sandboxBackend.value === "k8s";
+  if (!minutes) {
+    // 拿不到配置时只说「超时回收」，不编造具体数字
+    return isK8s ? "空闲超时自动回收沙箱" : "空闲超时自动回收";
+  }
+  return isK8s ? `空闲 ${minutes}m 自动回收沙箱` : `空闲 ${minutes}m 自动回收`;
+});
 
 const showSandboxActionsMenu = ref(false);
 const sandboxActionsDropdownRef = ref<HTMLElement | null>(null);

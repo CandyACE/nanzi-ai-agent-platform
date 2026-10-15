@@ -1391,12 +1391,39 @@ async def get_conversation_context_usage(
     except Exception as exc:
         logger.warning("读取 sandbox_auto_warm 失败: %s", exc)
         sandbox_auto_warm = True
+    try:
+        # 浮标要显示「空闲 Xm 自动回收」，因此必须与回收器**同源**取值：
+        # 此前前端把 30 分钟写死在组件里，管理台把 sandbox_idle_time 改成 15 分钟后
+        # 界面仍在说 30m（用户截图取证）。这里复用回收器唯一的解析函数。
+        from app.services.ai.runtime.agentscope import workspace as sandbox_workspace
+
+        # 该解析函数曾名 `_effective_sandbox_idle_seconds`，后提升为公共名
+        # `resolve_effective_sandbox_idle_seconds`；两者指向同一实现。这里「优先公共名、
+        # 回退旧名」，使得沙箱模块的这次重命名无论是否与本改动同步落地，取到的都是回收器
+        # 正在用的**同一个**函数（同源不变），不会因名字未同步而静默降级。
+        resolve_idle_seconds = getattr(
+            sandbox_workspace, "resolve_effective_sandbox_idle_seconds", None
+        ) or getattr(sandbox_workspace, "_effective_sandbox_idle_seconds")
+
+        idle_default_seconds = (
+            sandbox_workspace.K8S_WORKSPACE_IDLE_SECONDS
+            if sandbox_policy == "k8s"
+            else sandbox_workspace.DOCKER_WORKSPACE_IDLE_SECONDS
+        )
+        sandbox_idle_minutes = round(
+            await resolve_idle_seconds(default_seconds=idle_default_seconds) / 60.0,
+            1,
+        )
+    except Exception as exc:
+        logger.warning("读取 sandbox_idle_time 失败: %s", exc)
+        sandbox_idle_minutes = None
     return StandardResponse(
         data={
             **usage,
             "sandbox_policy": sandbox_policy,
             "sandbox_runtime_env": get_env(),
             "sandbox_auto_warm": sandbox_auto_warm,
+            "sandbox_idle_minutes": sandbox_idle_minutes,
         }
     )
 

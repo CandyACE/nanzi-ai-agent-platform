@@ -5,7 +5,7 @@ export type SandboxWorkspaceStatus = "idle" | "starting" | "stopping" | "running
 
 export interface UseSandboxWorkspaceOptions {
   conversationId: Ref<string | null | undefined>;
-  contextUsage: Ref<{ sandbox_policy?: string; sandbox_auto_warm?: boolean } | null | undefined>;
+  contextUsage: Ref<{ sandbox_policy?: string; sandbox_auto_warm?: boolean; sandbox_idle_minutes?: number | null } | null | undefined>;
   /** 凭据渲染回调；门户认证已由同源 HttpOnly Cookie 承载，调用方可不再提供 */
   authHeaders?: () => Record<string, string> | undefined;
   isProcessing?: Ref<boolean>;

@@ -139,7 +139,12 @@ async def test_sandbox_activity_heartbeat_refreshes_last_used(monkeypatch):
     async def _fake_idle(*, default_seconds: float) -> float:
         return 0.02
 
-    monkeypatch.setattr(ws, "_effective_sandbox_idle_seconds", _fake_idle)
+    # 解析函数曾名 _effective_*、后提升为公共名 resolve_effective_*；心跳内部按当前
+    # 文件里的那个名字调用，两个名字都接管，断言才不会因重命名而失效。
+    monkeypatch.setattr(
+        ws, "resolve_effective_sandbox_idle_seconds", _fake_idle, raising=False
+    )
+    monkeypatch.setattr(ws, "_effective_sandbox_idle_seconds", _fake_idle, raising=False)
     monkeypatch.setattr(ws, "SANDBOX_ACTIVITY_HEARTBEAT_MIN_SECONDS", 0.01)
 
     async with ws._sandbox_activity_heartbeat(cache_key=cache_key):
@@ -175,7 +180,12 @@ async def test_lazy_bash_tool_heartbeats_during_long_command(monkeypatch):
     async def _fake_idle(*, default_seconds: float) -> float:
         return 0.02
 
-    monkeypatch.setattr(ws, "_effective_sandbox_idle_seconds", _fake_idle)
+    # 解析函数曾名 _effective_*、后提升为公共名 resolve_effective_*；心跳内部按当前
+    # 文件里的那个名字调用，两个名字都接管，断言才不会因重命名而失效。
+    monkeypatch.setattr(
+        ws, "resolve_effective_sandbox_idle_seconds", _fake_idle, raising=False
+    )
+    monkeypatch.setattr(ws, "_effective_sandbox_idle_seconds", _fake_idle, raising=False)
     monkeypatch.setattr(ws, "SANDBOX_ACTIVITY_HEARTBEAT_MIN_SECONDS", 0.01)
 
     proxy = ws.LazySandboxWorkspaceProxy(
