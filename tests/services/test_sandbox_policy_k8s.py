@@ -1,10 +1,14 @@
 import asyncio
 import os
+import pathlib
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 pytestmark = pytest.mark.no_infrastructure
+
+#: 测试用技能集合令牌：必须出现在 subPath 目录名里（``skills-<令牌>``）。
+SKILLS_LAYOUT = "deadbeef1234"
 
 
 @pytest.mark.asyncio
@@ -251,10 +255,15 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
         DummyBaseWithPod,
         existing_pvc="shared-pvc",
         sandbox_user_key="u_test_123",
+        sandbox_skills_layout=SKILLS_LAYOUT,
         public_docs_mounted=True,
         local_data_root=str(tmp_path),
         resources={"limits": {"cpu": "1000m", "memory": "1Gi"}},
     )
+
+    # 技能集合令牌必须真的落到实例上：构造时漏传会让 subPath 恒挂历史单份布局
+    # ``sandbox/skills``，与平台按令牌分片的治理目录脱节（多技能集合互见）。
+    assert ws._nanzi_skills_layout == SKILLS_LAYOUT
 
     await ws._create_pod()
 
@@ -276,7 +285,10 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     # （${workdir}/skills）会落在个人技能源目录上，把模板 .seed 写进用户源码目录，
     # 同时丢掉「公共技能打包副本」与「个人技能源」的隔离。
     skills_mount = next(m for m in mounts if m.mount_path == "/workspace/skills")
-    assert skills_mount.sub_path == "agent_workspaces/u_test_123/sandbox/skills"
+    assert (
+        skills_mount.sub_path
+        == f"agent_workspaces/u_test_123/sandbox/skills-{SKILLS_LAYOUT}"
+    )
     assert skills_mount.read_only is not True
 
     personal_skills_mount = next(
@@ -296,7 +308,9 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     assert os.path.isdir(precreated_user_workdir)
     # 技能两条 subPath 目录必须在 kubelet 挂载前物理存在，否则 Pod 会卡在
     # ContainerCreating（MountVolume.SetUp failed）
-    assert os.path.isdir(os.path.join(precreated_user_workdir, "sandbox", "skills"))
+    assert os.path.isdir(
+        os.path.join(precreated_user_workdir, "sandbox", f"skills-{SKILLS_LAYOUT}")
+    )
     assert os.path.isdir(os.path.join(precreated_user_workdir, "skills"))
 
     # 校验 resources 自动补齐 requests
@@ -1470,17 +1484,23 @@ async def test_policy_k8s_workspace_reuses_sandbox_skill_governance(monkeypatch,
     # workspace_root 的语义是「用户工作区根」，即 <data>/agent_workspaces
     # （与 Docker 侧 _resolve_docker_sandbox_host_workdir 传入的 root 一致）。
     workspace_root = tmp_path / "agent_workspaces"
-    # 造出"沙箱技能目录已有旧 seed、但没有任何指纹记录"的初始状态
+    # 造出"沙箱技能目录已有旧 seed、但没有任何指纹记录"的初始状态。
+    # 刻意用**历史单份布局** ``sandbox/skills``：升级到带令牌的分片布局时必须整体迁移过去，
+    # 否则 agent 用技能 API 自建的技能（落在分区里）会凭空消失。
     host_workdir = workspace_root / "test_user__1"
-    stale_skill = host_workdir / "sandbox" / "skills" / ".seed" / "alpha"
+    legacy_skills_dir = host_workdir / "sandbox" / "skills"
+    stale_skill = legacy_skills_dir / ".seed" / "alpha"
     stale_skill.mkdir(parents=True)
     (stale_skill / "SKILL.md").write_text("---\nname: alpha\n---\n", encoding="utf-8")
+    layout = ws_mod._skill_paths_cache_token(["/fake/skill"])
+    skills_dir = pathlib.Path(ws_mod._sandbox_skills_dir(str(host_workdir), layout))
+    assert skills_dir != legacy_skills_dir, "带令牌的目录必须与历史单份布局分开"
 
     sync_calls: list[str] = []
     monkeypatch.setattr(
         ws_mod,
         "_sync_public_skills_into_sandbox_partitions",
-        lambda host: sync_calls.append(host) or 0,
+        lambda host, layout=None: sync_calls.append(host) or (0, []),
     )
 
     seed_state_before_initialize: list[bool] = []
@@ -1490,10 +1510,8 @@ async def test_policy_k8s_workspace_reuses_sandbox_skill_governance(monkeypatch,
     async def fake_initialize():
         # 记录 initialize 之前 .seed 是否已被作废；随后模拟 AgentScope 按最新
         # skill_paths 重新打包 seed（真实 initialize 的行为，指纹提交依赖它非空）
-        seed_state_before_initialize.append(
-            (host_workdir / "sandbox" / "skills" / ".seed").exists()
-        )
-        rebuilt = host_workdir / "sandbox" / "skills" / ".seed" / "alpha"
+        seed_state_before_initialize.append((skills_dir / ".seed").exists())
+        rebuilt = skills_dir / ".seed" / "alpha"
         rebuilt.mkdir(parents=True, exist_ok=True)
         (rebuilt / "SKILL.md").write_text(
             "---\nname: alpha\n---\n", encoding="utf-8"
@@ -1512,12 +1530,70 @@ async def test_policy_k8s_workspace_reuses_sandbox_skill_governance(monkeypatch,
         )
 
     # ① 两个技能目录都被预建：subPath 目录缺失会让 Pod 卡在 ContainerCreating
-    assert os.path.isdir(_sandbox_skills_dir(str(host_workdir)))
+    assert os.path.isdir(_sandbox_skills_dir(str(host_workdir), layout))
     assert os.path.isdir(_personal_skills_dir(str(host_workdir)))
+    # ①' 历史单份布局已整体迁移到带令牌目录（agent 自建技能随之保留）
+    assert not legacy_skills_dir.exists(), "历史目录迁移后不该继续存在"
     # ② 指纹缺失（等价于公共技能已变更）→ 旧 seed 在 initialize 之前就被作废
     assert seed_state_before_initialize == [False]
     # ③ initialize 之后同步既有分区，并提交指纹避免下一轮重复作废
     assert sync_calls == [str(host_workdir)]
-    assert ws_mod._read_sandbox_skills_fingerprint(str(host_workdir))
+    assert ws_mod._read_sandbox_skills_fingerprint(str(host_workdir), layout)
     assert ws._platform_sandbox_policy == SANDBOX_POLICY_K8S
     assert ws._platform_sandbox_public_docs_mounted is True
+
+
+@pytest.mark.asyncio
+async def test_k8s_workspace_stop_deletes_pods_missing_from_cache(monkeypatch):
+    """★ 停止沙箱不能只看进程内缓存：集群里真实存在但本进程不认识的 Pod 也要删掉。
+
+    只遍历 ``_k8s_workspace_cache`` 时，进程重启过、或 Pod 由别的副本创建的场合，接口
+    会回一个 ``status="stopped"`` 而 Pod 仍在跑（既不回收资源，"停止沙箱"也是假的），
+    只能等孤儿回收器按最小存活时长兜底。Docker 侧的 ``stop`` 早已按标签反查全部容器，
+    K8s 侧这里对齐。
+    """
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import stop_k8s_workspace
+
+    await _patch_k8s_policy(monkeypatch)
+    ws_module._k8s_workspace_cache.clear()
+    ws_module._k8s_workspace_locks.pop(K8S_RUNTIME_CACHE_KEY, None)
+
+    scanned: list[tuple[str, list[str]]] = []
+    deleted: list[tuple[str, str]] = []
+
+    async def fake_pod_names(namespace, patterns):
+        scanned.append((namespace, list(patterns)))
+        return ["as-ws-alice__1-deadbeef", "as-ws-alice__1-cafebabe"]
+
+    async def fake_delete(namespace, pod_name):
+        deleted.append((namespace, pod_name))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.find_k8s_sandbox_pod_names",
+        fake_pod_names,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.delete_k8s_sandbox_pod",
+        fake_delete,
+    )
+
+    try:
+        result = await stop_k8s_workspace(
+            user_id=1,
+            user_name="alice",
+            conversation_id="conv-1",
+        )
+    finally:
+        ws_module._k8s_workspace_cache.clear()
+        ws_module._k8s_workspace_locks.pop(K8S_RUNTIME_CACHE_KEY, None)
+
+    assert result["status"] == "stopped"
+    assert result["deleted_pods"] == [
+        "as-ws-alice__1-deadbeef",
+        "as-ws-alice__1-cafebabe",
+    ]
+    assert deleted, "缓存里没有的 Pod 也必须真的删掉"
+    assert scanned and scanned[0][1], "必须按用户标识的模式做标签反查"
+    assert "alice" in scanned[0][1][0], "反查模式要限定到当前用户"

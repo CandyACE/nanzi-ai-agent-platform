@@ -41,9 +41,9 @@ SANDBOX_POLICY_K8S = "k8s"
 
 #: 沙箱通用配置（docker/k8s 均生效）
 SANDBOX_AUTO_WARM_KEY = "sandbox_auto_warm"          # 布尔开关，默认开：打开/新建会话时自动预热
-SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"          # 分钟，默认 30：沙箱空闲回收时长
+SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"          # 分钟，默认 15：沙箱空闲回收时长
 SANDBOX_AUTO_WARM_DEFAULT = "true"
-SANDBOX_IDLE_TIME_DEFAULT = "30"
+SANDBOX_IDLE_TIME_DEFAULT = "15"
 
 #: 账号自主注册申请开关（默认关闭）。开启后登录页展示「申请账号」入口。
 USER_REGISTRATION_ENABLED_KEY = "user_registration_enabled"

@@ -137,3 +137,81 @@ def test_upgrade_legacy_skill_mount_hints_leaves_user_text_alone():
     assert messages[1]["content"] == "见 /app/data/skills/alpha/SKILL.md 这份文档"
     assert messages[3]["content"] == "提问：/app/data/skills/alpha/SKILL.md 这个路径是什么"
     assert upgrade_legacy_skill_mount_hints([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# 技能来源口径（scope）：全平台唯一的解析与判定
+# ---------------------------------------------------------------------------
+
+def test_normalize_skill_scope_accepts_every_known_spelling():
+    """前端写 global、历史载荷写 public，个人侧只认 personal——必须全部收敛到同一套取值。"""
+    from app.utils.skill_metadata import (
+        SKILL_SCOPE_PERSONAL,
+        SKILL_SCOPE_PUBLIC,
+        normalize_skill_scope,
+    )
+
+    assert normalize_skill_scope("personal") == SKILL_SCOPE_PERSONAL
+    assert normalize_skill_scope(" PERSONAL ") == SKILL_SCOPE_PERSONAL
+    assert normalize_skill_scope("Personal") == SKILL_SCOPE_PERSONAL
+    assert normalize_skill_scope("global") == SKILL_SCOPE_PUBLIC
+    assert normalize_skill_scope("public") == SKILL_SCOPE_PUBLIC
+    assert normalize_skill_scope("PUBLIC") == SKILL_SCOPE_PUBLIC
+
+
+def test_normalize_skill_scope_treats_absent_and_unknown_as_unspecified(caplog):
+    """未知取值按"未指定"处理并留 warning：它来自客户端载荷，不能 500、也不能当成个人技能。"""
+    import logging
+
+    from app.utils.skill_metadata import normalize_skill_scope
+
+    with caplog.at_level(logging.WARNING):
+        assert normalize_skill_scope(None) is None
+        assert normalize_skill_scope("") is None
+        assert normalize_skill_scope("   ") is None
+        assert normalize_skill_scope("weird") is None
+        assert normalize_skill_scope({"scope": "personal"}) is None
+        assert normalize_skill_scope(123) is None
+
+    warnings = [record for record in caplog.records if "未知技能 scope" in record.getMessage()]
+    # 缺省/空串是正常形态，不该刷日志；"weird"/dict/123 三条必须留下可诊断的信号
+    assert len(warnings) == 3, [record.getMessage() for record in warnings]
+
+
+def test_is_personal_skill_scope_only_trusts_personal():
+    """方向必须偏保守：认不出的取值一律当公共技能（既有行为），不能误放行个人口径。"""
+    from app.utils.skill_metadata import is_personal_skill_scope
+
+    assert is_personal_skill_scope("personal") is True
+    assert is_personal_skill_scope("Personal") is True
+    for other in ("global", "public", "weird", None, "", 0, {"x": 1}):
+        assert is_personal_skill_scope(other) is False
+
+
+def test_is_personal_skill_attachment_reads_both_layers():
+    """scope 可能写在附件顶层或 skillMeta/skill_meta 里，两处都要认（前端两处都发）。"""
+    from app.utils.skill_metadata import is_personal_skill_attachment
+
+    assert is_personal_skill_attachment({"type": "skill", "url": "a", "scope": "personal"})
+    assert is_personal_skill_attachment(
+        {"type": "skill", "url": "a", "skillMeta": {"scope": "personal"}}
+    )
+    assert is_personal_skill_attachment(
+        {"type": "skill", "url": "a", "skill_meta": {"scope": "PERSONAL"}}
+    )
+    # 顶层是个人、skillMeta 缺省（或反之）都不能被判成公共
+    assert is_personal_skill_attachment(
+        {"type": "skill", "url": "a", "scope": "personal", "skillMeta": {"name": "a"}}
+    )
+    assert is_personal_skill_attachment(
+        {"type": "skill", "url": "a", "scope": "global", "skillMeta": {"scope": "personal"}}
+    )
+    # 公共 / 未知 / 非字典
+    assert not is_personal_skill_attachment({"type": "skill", "url": "a", "scope": "global"})
+    assert not is_personal_skill_attachment({"type": "skill", "url": "a", "scope": "weird"})
+    assert not is_personal_skill_attachment(None)
+    assert not is_personal_skill_attachment("personal")
+    # 本函数只判"来源口径"这一件事，不判类型：调用方必须先按 type == "skill" 过滤
+    # （drop_forbidden_skill_items 与 sanitize_forbidden_skill_context 都是这么用的）。
+    assert is_personal_skill_attachment({"type": "file", "url": "a", "scope": "personal"})
+

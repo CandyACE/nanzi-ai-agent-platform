@@ -2,6 +2,17 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+/**
+ * 个人技能页（个人中心 / 嵌入式个人资源面板）与无平台技能管理权限时传 false。
+ *
+ * 第 3/4/5 步指向「待审核 / 平台技能 / 智能体中心」，而这些视图在个人技能页根本
+ * 不渲染（tab bar 整体 `v-if="!personalOnly"`）；点进去只会让技能列表整块消失，
+ * 页面看起来像坏了。因此这些入口在个人技能页一律隐藏，改为文案说明。
+ */
+const props = withDefaults(defineProps<{ platformWorkspaceAvailable?: boolean }>(), {
+  platformWorkspaceAvailable: true,
+})
+
 const emit = defineEmits<{
   (e: 'action', type: 'create' | 'review' | 'global'): void
   (e: 'close'): void
@@ -11,7 +22,24 @@ const emit = defineEmits<{
 const router = useRouter()
 const isCollapsed = ref(true)
 
-const steps = [
+interface FlowGuideStep {
+  step: number
+  title: string
+  subtitle: string
+  desc: string
+  tag: string
+  tagClass: string
+  iconBg: string
+  actionText: string
+  actionType: 'create' | 'review' | 'global' | 'agents' | null
+  hintText: string
+  secondaryActionText: string | null
+  secondaryActionType: string | null
+  /** 该步的目标视图只有平台技能管理员可达（个人技能页不渲染） */
+  requiresPlatformAdmin?: boolean
+}
+
+const steps: FlowGuideStep[] = [
   {
     step: 1,
     title: '技能创建与目录规划',
@@ -52,7 +80,8 @@ const steps = [
     actionType: 'review' as const,
     hintText: '',
     secondaryActionText: null,
-    secondaryActionType: null
+    secondaryActionType: null,
+    requiresPlatformAdmin: true
   },
   {
     step: 4,
@@ -66,7 +95,8 @@ const steps = [
     actionType: 'global' as const,
     hintText: '',
     secondaryActionText: null,
-    secondaryActionType: null
+    secondaryActionType: null,
+    requiresPlatformAdmin: true
   },
   {
     step: 5,
@@ -80,12 +110,19 @@ const steps = [
     actionType: 'agents' as const,
     hintText: '',
     secondaryActionText: null,
-    secondaryActionType: null
+    secondaryActionType: null,
+    requiresPlatformAdmin: true
   }
 ]
 
+/** 仅平台管理入口：个人技能页 / 无权限时既不显示按钮，也不允许触发跳转。 */
+const isAdminOnlyStep = (item: { requiresPlatformAdmin?: boolean }) =>
+  Boolean(item.requiresPlatformAdmin) && !props.platformWorkspaceAvailable
+
 const handleAction = (type: 'create' | 'review' | 'global' | 'agents' | null) => {
   if (!type) return
+  // 兜底守卫：即使调用方漏了 v-if，也不把个人技能页切到不可见的平台视图 / 越界跳转
+  if (type !== 'create' && !props.platformWorkspaceAvailable) return
   if (type === 'create') {
     emit('action', 'create')
   } else if (type === 'review') {
@@ -242,7 +279,7 @@ const handleDismiss = () => {
 
         <!-- 底部快捷动作 -->
         <div class="mt-3.5 border-t border-gray-100/80 pt-2.5">
-          <div v-if="item.actionType" class="flex items-center gap-1.5">
+          <div v-if="item.actionType && !isAdminOnlyStep(item)" class="flex items-center gap-1.5">
             <button
               type="button"
               class="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/60 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors cursor-pointer"
@@ -258,7 +295,7 @@ const handleDismiss = () => {
             v-else
             class="flex items-center justify-center rounded-lg bg-gray-50/80 py-1 text-[11px] font-medium text-gray-400"
           >
-            <span>{{ item.hintText }}</span>
+            <span>{{ isAdminOnlyStep(item) ? '仅平台技能管理员可用' : item.hintText }}</span>
           </div>
         </div>
       </div>

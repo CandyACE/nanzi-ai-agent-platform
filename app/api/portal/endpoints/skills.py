@@ -17,7 +17,14 @@ from app.core.config import settings
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
 from app.services.ai.agent_manager import AgentManagerService
-from app.services.skill_rename_service import SkillRenameError, rename_skill
+from app.services.skill_rename_service import (
+    RESERVED_SKILL_IDS,
+    SKILL_ID_PATTERN,
+    SkillRenameError,
+    remove_skill_references,
+    rename_skill,
+    validate_skill_id,
+)
 from app.services.skill_publication_service import (
     PublicationConflictError,
     PublicationNotFoundError,
@@ -25,9 +32,12 @@ from app.services.skill_publication_service import (
     approve_publication,
     get_publication_version,
     list_pending_publications,
+    list_published_publications,
     read_snapshot_text_file,
     reject_publication,
+    revoke_published_version,
 )
+from app.utils.skill_metadata import parse_skill_frontmatter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -79,20 +89,23 @@ class RejectPublicationRequest(BaseModel):
     comment: str
 
 
+class RevokePublicationRequest(BaseModel):
+    comment: str
+
+
 EDITABLE_TEXT_EXTENSIONS = {
     ".md", ".py", ".js", ".ts", ".json", ".txt", ".yaml", ".yml",
     ".ini", ".conf", ".sql", ".sh",
 }
 
-#: 技能 ID 白名单。必须与运行时判定（skill_resolver._validate_skill_id、
-#: skill_publication_service._validate_skill_id）逐字一致：运行时按这个正则过滤扫描结果，
+#: 技能 ID 白名单与保留字：**唯一实现**在 skill_rename_service，这里只做别名，
+#: 避免端点/重命名/发布服务三份口径各自漂移。运行时按同一正则过滤扫描结果，
 #: 放行正则之外的名字只会造出「管理页看得见、模型永远看不到」的幽灵技能。
-#: 长度对齐 skill_publications.source_personal_skill_id 的 VARCHAR(128)。
-_SKILL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+_SKILL_ID_PATTERN = SKILL_ID_PATTERN
 
 #: 与 /skills 下更早注册的字面路由同名的保留字。放行会被路由遮蔽（例如名为 stats 的技能
 #: 详情请求会命中统计接口），因此一律不允许创建。
-_RESERVED_SKILL_IDS = frozenset({"personal", "stats", "bindings", "publication-requests", "import"})
+_RESERVED_SKILL_IDS = RESERVED_SKILL_IDS
 
 
 def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
@@ -102,14 +115,14 @@ def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
     ——``os.path.join(SKILLS_DIR, ".")`` 就是技能库根目录本身，``commonpath`` 自比也相等，
     DELETE 端点随后 ``rmtree`` 会删掉**整个公共技能库**。白名单顺带挡住中文、点开头、
     空格等运行时本来就不认的名字。
+
+    ID 的格式/长度/保留字校验收敛到 :func:`skill_rename_service.validate_skill_id`
+    （create / rename / delete / 导入 / 上传全部走它），这里只负责路径边界。
     """
-    if not skill_id or not _SKILL_ID_PATTERN.match(skill_id):
-        raise HTTPException(
-            status_code=400,
-            detail="非法技能 ID 格式：仅允许字母、数字、下划线与连字符，长度 1-128",
-        )
-    if skill_id in _RESERVED_SKILL_IDS:
-        raise HTTPException(status_code=400, detail=f"技能 ID「{skill_id}」为系统保留字，请更换")
+    try:
+        skill_id = validate_skill_id(skill_id)
+    except SkillRenameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     skills_dir_abs = os.path.abspath(settings.SKILLS_DIR)
     skill_base_dir = os.path.abspath(os.path.join(skills_dir_abs, skill_id))
@@ -153,49 +166,31 @@ def validate_new_asset_path(skill_id: str, relative_path: str, asset_type: str) 
     return target_path
 
 def parse_skill_metadata(skill_id: str, skill_md_path: str) -> dict:
+    """读取技能元数据（列表/详情/资源范围共用），解析委托给唯一实现。
+
+    这里曾是**第三份** frontmatter 解析器：不剥 BOM、还自带一套「默认 name=id、
+    description=暂无技能描述、enabled=true」的兜底，于是同一个 SKILL.md 在列表页与运行时
+    可能给出不同结果（BOM 文件在运行时是禁用、在列表页永远是启用）。现在统一委托
+    :func:`app.utils.skill_metadata.parse_skill_frontmatter`，只在其上补齐本页需要的字段
+    与默认值语义：
+
+    * ``path``：前端展示用的相对路径；
+    * ``name``：缺省回落技能 ID；``description``：缺省回落「暂无技能描述」；
+    * ``enabled``：缺省 ``"true"``（字符串，与 frontmatter 原生形态一致，判定统一走
+      :func:`app.utils.skill_metadata.is_skill_enabled`）。
+
+    代价是 YAML 块标量（``description: >-`` 多行）不再被拼接——该能力只有这份解析器有，
+    而所有消费方（运行时、注入、列表）都以 skill_metadata 的单行口径为准，保留两套只会
+    继续漂移。多行描述请写成单行或改用 ``\\n``。
     """
-    无三方依赖正则提取 SKILL.md Frontmatter 元数据，支持 YAML 块标量(>-/>/|/|-)
-    """
+    meta = parse_skill_frontmatter(skill_id, skill_md_path)
     metadata = {
         "id": skill_id,
-        "name": skill_id,
-        "description": "暂无技能描述",
+        "name": (meta.get("name") or skill_id),
+        "description": (meta.get("description") or "").strip() or "暂无技能描述",
         "path": f"data/skills/{skill_id}",
-        "enabled": "true"
+        "enabled": str(meta.get("enabled", "true")),
     }
-    if not os.path.exists(skill_md_path):
-        return metadata
-    try:
-        with open(skill_md_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
-        if match:
-            yaml_block = match.group(1)
-            lines = yaml_block.splitlines()
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                if ":" in line and not line.startswith((" ", "\t", "-")):
-                    k, v = line.split(":", 1)
-                    key = k.strip().lower()
-                    raw_v = v.strip()
-                    # 处理 YAML 块标量指示符: >-, >, |-, |
-                    if raw_v in (">-", ">", "|-", "|"):
-                        collected = []
-                        i += 1
-                        while i < len(lines) and (lines[i].startswith(" ") or lines[i].startswith("\t")):
-                            collected.append(lines[i].strip())
-                            i += 1
-                        joined = " ".join(collected) if raw_v.startswith(">") else "\n".join(collected)
-                        metadata[key] = joined.strip().strip('"').strip("'") or metadata.get(key, "")
-                        continue
-                    else:
-                        metadata[key] = raw_v.strip('"').strip("'")
-                i += 1
-    except Exception as e:
-        logger.error(f"[Skills] Failed to parse SKILL.md for {skill_id}: {e}")
-    if "enabled" not in metadata:
-        metadata["enabled"] = "true"
     return metadata
 
 def get_path_modified_at(path: str) -> int:
@@ -396,6 +391,65 @@ async def reject_skill_publication_request(
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get("/publications", summary="列出当前已发布的平台技能（供下架使用）")
+async def list_publications(
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """列出**当前已发布**的公共技能，权限沿用技能管理端的 ``element:skills:admin``。
+
+    只返回「当前线上版本」那一条：``SUPERSEDED`` 历史版本、已驳回/已撤销/已下架的版本都
+    不在可下架范围内，列出来只会让管理员点了得到 409。
+    """
+    return {"status": "success", "data": {"items": await list_published_publications(session)}}
+
+
+@router.post("/publications/{version_id}/revoke", summary="下架已发布的平台技能")
+async def revoke_skill_publication(
+    version_id: str,
+    req: RevokePublicationRequest,
+    user: Dict = Depends(skill_publication_reviewer),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """下架：撤回已发布版本，技能从公共库消失，但保留可重新发布的能力。
+
+    与删除的区别：**保留**发布谱系（``platform_skill_id`` / ``snapshot_path``），作者可以
+    在原技能上重新提交、重新审核，复用同一个平台技能 ID 重新物化目录。
+
+    返回该发布谱系的 payload 加上 ``synced`` / ``warnings``（与重命名、删除同一风格）：
+    下架会让公共技能目录真的消失，因此智能体白名单与会话挂载里的引用必须同步清理，
+    清理不了的要在 ``warnings`` 里如实告知，不能静默留下断链。
+    """
+    if not (req.comment or "").strip():
+        raise HTTPException(status_code=422, detail="下架原因不能为空")
+    try:
+        data = await revoke_published_version(
+            session,
+            version_id=version_id,
+            reviewer=user,
+            comment=req.comment,
+        )
+    except PublicationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PublicationConflictError as exc:
+        # 重复下架 / 非当前发布版本 / 未发布：都是状态冲突，必须 409 而不是 500
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    platform_skill_id = data.get("platform_skill_id")
+    report = await remove_skill_references(
+        session, skill_id=platform_skill_id or "", scope="global", actor=user
+    )
+    data.update({"synced": report.get("synced", {}), "warnings": report.get("warnings", [])})
+    return {
+        "status": "success",
+        "data": data,
+        "message": f"平台技能 {data.get('name') or platform_skill_id} 已下架",
+    }
+
 
 @router.get("/{skill_id}/preview", response_model=Dict[str, Any])
 async def preview_skill_md(
@@ -710,18 +764,46 @@ async def delete_skill_file(
 @router.delete("/{skill_id}", response_model=Dict[str, Any])
 async def delete_entire_skill(
     skill_id: str,
-    user: Dict = Depends(skill_platform_admin)
+    user: Dict = Depends(skill_platform_admin),
+    session: AsyncSession = Depends(get_db_session),
 ):
-    """
-    彻底注销并递归清空删除技能根目录
+    """彻底注销并递归清空删除技能根目录，同时清理三处引用。
+
+    删除与重命名面对的是**同一套引用**，只做 ``shutil.rmtree`` 会留下三类断链：
+
+    * ``ai_agent_versions.skills`` 白名单里留着已消失的 ID（管理员看不出智能体为什么少一个技能）；
+    * Redis 会话挂载里的技能 chip 指向不存在的技能（用户点开是空的）；
+    * ``skill_publications`` 里仍有一条指向不存在平台技能的「已发布」记录。
+
+    发布血缘的处理取舍是**标记下架而不是物理删除**（见
+    :func:`skill_publication_service.mark_platform_skill_publications_revoked` 的说明）：
+    删记录会毁掉审核审计轨迹，并让作者重新提交时拿到一个全新的平台技能 ID（唯一索引），
+    历史发布、智能体白名单、会话挂载就再也回不来了。标记下架则保留
+    ``platform_skill_id`` 与 ``snapshot_path``，重新提交 → 重新审核即可复用同一 ID 重新物化。
+    **快照目录刻意保留**：它是重新上架的唯一来源，删掉技能就真的不可恢复了。
+
+    返回与重命名同样的 ``synced`` / ``warnings``：主操作（删目录）不回滚，引用同步尽力而为
+    并如实回报，不静默成功。
     """
     try:
         skill_dir = validate_secure_skill_path(skill_id)
         if not os.path.exists(skill_dir):
             raise HTTPException(status_code=404, detail="技能目录不存在")
-            
+
         shutil.rmtree(skill_dir)
-        return {"status": "success", "message": f"技能 {skill_id} 已被物理彻底移除"}
+        # 少数老单测直接调用本函数（拿到的是 Depends 占位对象而非真实会话），
+        # remove_skill_references 用鸭子类型识别并跳过依赖数据库的同步、写进 warnings。
+        report = await remove_skill_references(
+            session,
+            skill_id=skill_id,
+            scope="global",
+            actor=user,
+        )
+        return {
+            "status": "success",
+            "data": report,
+            "message": f"技能 {skill_id} 已被物理彻底移除",
+        }
     except HTTPException:
         raise
     except Exception as e:

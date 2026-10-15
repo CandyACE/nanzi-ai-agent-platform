@@ -253,3 +253,75 @@ async def test_exec_docker_workspace_command_function(monkeypatch):
     assert "__NANZI_PWD_" not in res["stdout"]
 
 
+
+
+@pytest.mark.asyncio
+async def test_exec_docker_rejects_stale_skills_snapshot(monkeypatch, tmp_path):
+    """★ 只读入口（终端）必须核对技能快照：集合过期 → 拒绝执行并逐出那台沙箱。
+
+    终端此前只按标签定位容器就执行命令，管理员禁用/下架技能后仍能 `cat` 甚至执行被禁
+    技能的脚本，直到空闲回收——这是唯一连"换技能集合就换沙箱"都拦不住的入口。
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.ai.runtime.agentscope import workspace as ws
+    from app.services.ai.runtime.agentscope.workspace import exec_docker_workspace_command
+
+    root = str(tmp_path)
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get", AsyncMock(return_value="docker")
+    )
+    monkeypatch.setattr(ws, "resolve_workspace_root", AsyncMock(return_value=root))
+    # 该用户**当前**的技能集合（发现结果）只有 alpha；沙箱当时用的是 alpha+beta
+    monkeypatch.setattr(
+        ws, "discover_platform_skill_paths", lambda **kwargs: ["/public/skills/alpha"]
+    )
+    monkeypatch.setattr(
+        "app.services.ai.skills.policy.get_forbidden_skill_ids",
+        AsyncMock(return_value=set()),
+    )
+
+    class FakeContainer:
+        id = "cnt-stale"
+
+        async def show(self):
+            return {"State": {"Running": True}, "Id": "cnt-stale"}
+
+    class FakeDocker:
+        def __init__(self):
+            self.containers = MagicMock()
+            self.containers.get = AsyncMock(return_value=FakeContainer())
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("aiodocker.Docker", FakeDocker)
+
+    user_key = ws._resolve_sandbox_user_key(user_id=1, user_name="alice", user_info=None)
+    workdir = ws._conversation_workdir(root, user_key, "conv-stale")
+    old_layout = ws._skill_paths_cache_token(
+        ["/public/skills/alpha", "/public/skills/beta"]
+    )
+    stale_key = f"{root}::{user_key}::{old_layout}::docker"
+    monkeypatch.setitem(
+        ws._workspace_sandbox_refs, f"{workdir}::all::docker", stale_key
+    )
+    evicted: list[str] = []
+
+    async def fake_evict(cache_key, *, reason):
+        evicted.append(cache_key)
+        return 1
+
+    monkeypatch.setattr(ws, "_evict_sandbox_cache_entry", fake_evict)
+
+    with pytest.raises(DockerSandboxUnavailableError) as exc_info:
+        await exec_docker_workspace_command(
+            user_id=1,
+            user_name="alice",
+            conversation_id="conv-stale",
+            command="cat /workspace/skills/.seed/beta/SKILL.md",
+        )
+
+    assert exc_info.value.reason_code == "docker_sandbox_skills_stale"
+    assert "重新" in exc_info.value.user_message or "重置" in exc_info.value.user_message
+    assert evicted == [stale_key], "过期的沙箱必须被逐出，而不是留着继续可用"

@@ -37,6 +37,8 @@ export interface ContextUsage {
   sandbox_policy?: string | null;
   sandbox_runtime_env?: string | null;
   sandbox_auto_warm?: boolean | null;
+  /** 沙箱空闲回收分钟数（与后端回收器同源，供浮标显示「空闲 Xm 自动回收」） */
+  sandbox_idle_minutes?: number | null;
 }
 
 export interface RefreshContextUsageOptions {

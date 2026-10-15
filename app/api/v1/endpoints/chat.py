@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.ai.agent_service import agent_service
@@ -20,6 +20,7 @@ from app.core.dependencies import require_admin, require_api_key
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
+from app.utils.skill_metadata import normalize_skill_scope
 from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
@@ -509,6 +510,18 @@ class SkillMeta(BaseModel):
     id: Optional[str] = Field(default=None, description="技能 ID")
     name: Optional[str] = Field(default=None, description="SKILL.md Frontmatter name")
     description: Optional[str] = Field(default=None, description="SKILL.md Frontmatter description")
+    # 技能来源口径：前端 handleSelectSkill 会同时写进附件与这里（global/public=公共，personal=个人）。
+    # 必须显式声明：Pydantic 2 默认 extra='ignore'，未声明的字段会被**静默丢弃**，而历史消息是
+    # 用 msg.model_dump() 还原的，一丢就再也拿不回来——个人技能会被当成公共技能去解析与判禁用。
+    scope: Optional[str] = Field(
+        default=None, description="技能来源口径：personal（个人库）或 global/public（公共库）"
+    )
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _normalize_scope(cls, value: Any) -> Optional[str]:
+        """归一化 scope；未知取值按"未指定"处理，**绝不因为客户端写了怪值而 500**。"""
+        return normalize_skill_scope(value, source="SkillMeta.scope")
 
 
 class ChatFile(BaseModel):
@@ -519,6 +532,17 @@ class ChatFile(BaseModel):
     ext: str = Field(..., description="文件后缀名")
     skillMeta: Optional[SkillMeta] = Field(default=None, description="技能 Frontmatter 元数据（type=skill 时）")
     skill_meta: Optional[SkillMeta] = Field(default=None, description="skillMeta 蛇形命名别名")
+    # 与 SkillMeta.scope 同源，前端两处都发；下游（注入器的挂载解析、禁用过滤）先看顶层再看
+    # skillMeta，因此两处都必须能带回来（见 app/utils/skill_metadata.is_personal_skill_attachment）。
+    scope: Optional[str] = Field(
+        default=None, description="技能来源口径：personal（个人库）或 global/public（公共库）"
+    )
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _normalize_scope(cls, value: Any) -> Optional[str]:
+        """归一化 scope；未知取值按"未指定"处理，**绝不因为客户端写了怪值而 500**。"""
+        return normalize_skill_scope(value, source="ChatFile.scope")
 
 class ChatMessage(BaseModel):
     role: str = Field(..., pattern="^(user|assistant|system)$")
@@ -1367,12 +1391,39 @@ async def get_conversation_context_usage(
     except Exception as exc:
         logger.warning("读取 sandbox_auto_warm 失败: %s", exc)
         sandbox_auto_warm = True
+    try:
+        # 浮标要显示「空闲 Xm 自动回收」，因此必须与回收器**同源**取值：
+        # 此前前端把 30 分钟写死在组件里，管理台把 sandbox_idle_time 改成 15 分钟后
+        # 界面仍在说 30m（用户截图取证）。这里复用回收器唯一的解析函数。
+        from app.services.ai.runtime.agentscope import workspace as sandbox_workspace
+
+        # 该解析函数曾名 `_effective_sandbox_idle_seconds`，后提升为公共名
+        # `resolve_effective_sandbox_idle_seconds`；两者指向同一实现。这里「优先公共名、
+        # 回退旧名」，使得沙箱模块的这次重命名无论是否与本改动同步落地，取到的都是回收器
+        # 正在用的**同一个**函数（同源不变），不会因名字未同步而静默降级。
+        resolve_idle_seconds = getattr(
+            sandbox_workspace, "resolve_effective_sandbox_idle_seconds", None
+        ) or getattr(sandbox_workspace, "_effective_sandbox_idle_seconds")
+
+        idle_default_seconds = (
+            sandbox_workspace.K8S_WORKSPACE_IDLE_SECONDS
+            if sandbox_policy == "k8s"
+            else sandbox_workspace.DOCKER_WORKSPACE_IDLE_SECONDS
+        )
+        sandbox_idle_minutes = round(
+            await resolve_idle_seconds(default_seconds=idle_default_seconds) / 60.0,
+            1,
+        )
+    except Exception as exc:
+        logger.warning("读取 sandbox_idle_time 失败: %s", exc)
+        sandbox_idle_minutes = None
     return StandardResponse(
         data={
             **usage,
             "sandbox_policy": sandbox_policy,
             "sandbox_runtime_env": get_env(),
             "sandbox_auto_warm": sandbox_auto_warm,
+            "sandbox_idle_minutes": sandbox_idle_minutes,
         }
     )
 

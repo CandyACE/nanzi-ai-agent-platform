@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -25,12 +26,13 @@ from app.services.ai.skill_resolver import (
     resolve_personal_skill_dir,
 )
 from app.services.portal_notification_service import PortalNotificationService
+from app.services.skill_rename_service import SkillRenameError, validate_skill_id
 from app.utils.skill_metadata import parse_skill_frontmatter
 
+logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 MAX_SNAPSHOT_SIZE = 20 * 1024 * 1024
-_SKILL_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -73,13 +75,29 @@ def publication_snapshot_root() -> str:
 
 
 def _validate_skill_id(skill_id: str) -> None:
-    if not skill_id or not _SKILL_ID_RE.fullmatch(skill_id):
-        raise ValueError("invalid skill id")
+    """校验技能 ID（格式/长度/保留字），口径收敛到 skill_rename_service.validate_skill_id。
+
+    此前这里是第三份正则（无长度上限、无保留字），与端点/重命名两处口径漂移时，同一个 ID
+    可能在端点上合法、在发布服务里非法（或反过来），报错时机取决于用户走了哪条路。
+    """
+    try:
+        validate_skill_id(skill_id)
+    except SkillRenameError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _assert_inside(root: str, path: str) -> None:
     if os.path.commonpath([os.path.abspath(root), os.path.abspath(path)]) != os.path.abspath(root):
         raise ValueError("skill path escapes root")
+
+
+def _is_inside(root: str, path: str) -> bool:
+    """非抛出版本：用于「不可信的记录位置」，越界时跳过而不是中断整个操作。"""
+    try:
+        _assert_inside(root, path)
+    except ValueError:
+        return False
+    return True
 
 
 def _walk_files(root: str):
@@ -290,6 +308,85 @@ def read_snapshot_text_file(snapshot_root: str, relative_path: str) -> str:
         return handle.read()
 
 
+def cleanup_publication_snapshot(snapshot_path: str | None) -> None:
+    """删除某个**已终结**版本（驳回 / 撤销 / 下架）的物化快照目录，尽力而为。
+
+    这三条路径上的快照都不会再被任何流程使用：``approve_publication`` 只接受 ``PENDING``
+    版本，作者重新提交时 ``create_personal_skill_snapshot`` 会为新版本号重新物化一份。
+    此前从不清理，于是每驳回/撤销一次就在快照根下留一份 20MB 级的孤儿副本，长期只增不减。
+
+    **不动 approve 之后的目录**：已发布版本的快照是重新物化的唯一来源（下架后重新上架、
+    版本回溯都靠它），删除等于把平台技能变成不可恢复的空中楼阁。
+
+    安全约束：目标必须严格位于 :func:`publication_snapshot_root` 之下且不等于该根目录本身
+    （防目录穿越 / 误删整个快照库）；越界只记日志不抛异常——清理是收尾动作，不能反过来让
+    驳回/撤销失败。``skill_publication_versions.snapshot_path`` 列是 NOT NULL，故保留原值
+    作为历史记录（该目录此后不再存在，读取侧已按 ``os.path.isdir`` 兜底）。
+    """
+    if not snapshot_path:
+        return
+    try:
+        root = os.path.realpath(publication_snapshot_root())
+        target = os.path.realpath(str(snapshot_path))
+        if target == root or not target.startswith(root + os.sep):
+            logger.warning("[SkillPublication] 拒绝清理快照根之外的目录: %s", snapshot_path)
+            return
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+            # 该 publication 下已无任何版本快照时，顺手收掉空壳目录
+            parent = os.path.dirname(target)
+            if parent.startswith(root + os.sep) and os.path.isdir(parent) and not os.listdir(parent):
+                os.rmdir(parent)
+    except OSError as exc:  # pragma: no cover - 仅日志
+        logger.warning("[SkillPublication] 快照目录清理失败 %s: %s", snapshot_path, exc)
+
+
+def remove_materialized_skill(
+    *, platform_skill_id: str, materialized_path: str | None = None
+) -> list[str]:
+    """删除已物化的平台技能目录，返回真正被删掉的路径列表。
+
+    两个都删、都不容越界：
+    1. ``materialized_path``（发布时记录的位置，可能是历史遗留的别处）；
+    2. ``SKILLS_DIR/<platform_skill_id>``（当前约定位置）。
+
+    只按记录删会漏掉「记录为空」的旧数据（那时还没写 ``materialized_path``）；只按约定
+    位置删又会漏掉历史遗留布局，因此两者都删。路径先过 ``_validate_skill_id`` 与
+    ``_assert_inside``，任何一步越界都直接抛异常——这是删除操作，宁可失败也不能删到
+    技能库之外。
+    """
+    _validate_skill_id(platform_skill_id)
+    skills_root = os.path.abspath(settings.SKILLS_DIR)
+    candidates = [os.path.abspath(os.path.join(skills_root, platform_skill_id))]
+    if materialized_path:
+        recorded = os.path.abspath(str(materialized_path))
+        # 记录位置是**库里的字符串**，属于不可信输入：
+        # ① 越界（历史部署换过 SKILLS_DIR、或数据被改过）→ 跳过，绝不能删库外的目录；
+        # ② 目录名与技能 ID 不一致 → 说明它指的是**另一个**技能，跟着删就是连坐误删。
+        # 两种情况都只跳过 + 告警：一条陈旧记录不该让管理员的「下架」整体失败，
+        # 约定位置（SKILLS_DIR/<id>）仍然照删，运行时看到的公共技能照样消失。
+        if _is_inside(skills_root, recorded) and os.path.basename(recorded) == platform_skill_id:
+            candidates.append(recorded)
+        else:
+            logger.warning(
+                "[SkillPublication] 跳过不可信的物化记录: %s (技能 %s，技能库 %s)",
+                recorded,
+                platform_skill_id,
+                skills_root,
+            )
+    # 先整体校验、再动手删除：任何一条越界都必须在删掉第一条之前失败，避免「删了一半」
+    for target in candidates:
+        _assert_inside(skills_root, target)
+        if target == skills_root:  # 纵深防御：白名单之外再挡一次「删整库」
+            raise ValueError("skill path escapes root")
+    removed: list[str] = []
+    for target in candidates:
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+            removed.append(target)
+    return removed
+
+
 def materialize_snapshot(
     *,
     snapshot_path: str,
@@ -306,6 +403,11 @@ def materialize_snapshot(
     target = skills_root / platform_skill_id
     staged = Path(tempfile.mkdtemp(prefix=f".{platform_skill_id}-", dir=str(skills_root)))
     backup: Path | None = None
+    # ``replaced`` 记录"新内容是否已经就位"。只有它为 True 时才能删 ``target``：
+    # 此前不管是哪一步失败都无条件 ``rmtree(target)``，于是**准备阶段**（拷快照、校验、
+    # 甚至 ``os.replace(target, backup)`` 本身）失败都会把**正在线上服务的**平台技能目录
+    # 删掉——审核这次通过失败，代价是线上技能消失，且没有备份可恢复。
+    replaced = False
     try:
         _copy_tree_contents(Path(snapshot_path), staged)
         copied_stats = validate_snapshot_tree(str(staged))
@@ -315,6 +417,7 @@ def materialize_snapshot(
             backup = skills_root / f".{platform_skill_id}.backup-{uuid.uuid4().hex}"
             os.replace(str(target), str(backup))
         os.replace(str(staged), str(target))
+        replaced = True
         _write_platform_metadata(
             target,
             platform_skill_id=platform_skill_id,
@@ -325,7 +428,8 @@ def materialize_snapshot(
             shutil.rmtree(backup, ignore_errors=True)
     except Exception:
         shutil.rmtree(staged, ignore_errors=True)
-        if target.exists():
+        if replaced and target.exists():
+            # 只清理"我们自己刚放上去的那一份"，随后把备份放回原位
             shutil.rmtree(target, ignore_errors=True)
         if backup is not None and backup.exists():
             os.replace(str(backup), str(target))
@@ -364,8 +468,12 @@ def _platform_skill_id(name: str, publication_id: str) -> str:
 
 def _publication_payload(publication: SkillPublication, version: SkillPublicationVersion | None) -> dict[str, Any]:
     effective_status = publication.status
-    if version is not None and version.status in {"REJECTED", "WITHDRAWN"}:
+    # REVOKED 是「管理员下架」：作者必须看到「已下架」+ 下架原因，而不是继续显示「已发布」。
+    if version is not None and version.status in {"REJECTED", "WITHDRAWN", "REVOKED"}:
         effective_status = version.status
+    # 下架字段用 getattr 读取：DB 列一定存在，但轻量对象/单测替身可能没有这几个新列，
+    # 不能因为少一个审计字段就让整个发布列表 500。
+    revoked_at = getattr(publication, "revoked_at", None)
     return {
         "publication_id": publication.id,
         "version_id": version.id if version else None,
@@ -382,6 +490,8 @@ def _publication_payload(publication: SkillPublication, version: SkillPublicatio
         "content_sha256": version.content_sha256 if version else None,
         "withdrawn_by": version.withdrawn_by if version else None,
         "withdrawn_at": version.withdrawn_at.isoformat() if version and version.withdrawn_at else None,
+        "revoked_by": getattr(publication, "revoked_by", None),
+        "revoked_at": revoked_at.isoformat() if revoked_at else None,
     }
 
 
@@ -481,6 +591,8 @@ async def withdraw_personal_skill_publication(
             SkillPublication.source_personal_skill_id == skill_id,
         )
         .order_by(desc(SkillPublicationVersion.version_number))
+        # 行锁：两个并发的撤销/提交不会各自读到 PENDING 再双双写状态
+        .with_for_update()
     )
     row = result.first()
     if not row:
@@ -498,6 +610,9 @@ async def withdraw_personal_skill_publication(
         publication.status = "PUBLISHED"
     publication.updated_at = datetime.now()
     await session.flush()
+    # 撤销后该快照再无用途（重新提交会为新版本号重新物化），顺手清掉，避免孤儿副本堆积。
+    # 用 getattr 容错：少数调用方/单测传的是轻量对象，缺字段时跳过清理即可，不能因此 500。
+    cleanup_publication_snapshot(getattr(version, "snapshot_path", None))
     return _publication_payload(publication, version)
 
 
@@ -563,7 +678,12 @@ async def submit_personal_skill(session: AsyncSession, *, user: dict[str, Any], 
         submitted_by=user_id,
     )
     session.add(version)
-    publication.status = "PENDING"
+    # 已经上线过的谱系重新提交新版本时，**线上版本仍然在线**（current_version 非空），
+    # publication.status 必须保持 PUBLISHED：此前无条件写 PENDING，会让「下架」彻底不可用
+    # ——下架要求 status=PUBLISHED，管理端的可下架列表也只列 PUBLISHED，于是作者提交一次
+    # 新版本，管理员就再也下架不了正在线上服务的那一版（真实故障）。是否有待审版本由
+    # **版本行**表达（payload.pending_version / version_status），不靠这条汇总状态。
+    publication.status = "PUBLISHED" if publication.current_version else "PENDING"
     await session.flush()
     await notify_skill_publication_reviewers(
         session,
@@ -644,6 +764,9 @@ async def approve_publication(
         select(SkillPublicationVersion, SkillPublication)
         .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
         .where(SkillPublicationVersion.id == version_id)
+        # 行锁：两位审核人同时点"通过"时，第二个必须等第一个提交后再读，
+        # 从而看到 APPROVED 并得到 409，而不是也去物化一遍（两份新目录 + 状态互相覆盖）
+        .with_for_update()
     )
     row = result.first()
     if not row:
@@ -671,6 +794,11 @@ async def approve_publication(
     publication.platform_skill_id = platform_id
     publication.current_version = version.version_number
     publication.status = "PUBLISHED"
+    # 重新上架要清掉上一次下架的审计痕迹：否则管理端会一边显示"已发布"、一边带着
+    # revoked_at/revoked_by（"这版什么时候被下架的"变成误导信息）。
+    if getattr(publication, "revoked_at", None) is not None:
+        publication.revoked_at = None
+        publication.revoked_by = None
     publication.updated_at = now
     version.status = "APPROVED"
     version.reviewed_by = reviewer_id
@@ -694,6 +822,7 @@ async def reject_publication(
         select(SkillPublicationVersion, SkillPublication)
         .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
         .where(SkillPublicationVersion.id == version_id)
+        .with_for_update()  # 与"通过"同一把锁：驳回 vs 通过不能再各写一半
     )
     row = result.first()
     if not row:
@@ -706,6 +835,206 @@ async def reject_publication(
     version.reviewed_at = datetime.now()
     version.review_comment = comment.strip()
     if publication.current_version is None:
-        publication.status = "PENDING"
+        # 从未发布过的谱系：驳回后既没有线上版本、也没有待审版本，状态是 UNPUBLISHED。
+        # 此前写回 "PENDING"，于是列表里出现「状态待审、却一条待审版本都没有」的幽灵记录。
+        publication.status = "UNPUBLISHED"
     await session.flush()
+    # 驳回的版本永远不会再被 approve（approve 只接受 PENDING），快照就此作废，顺手清掉
+    cleanup_publication_snapshot(getattr(version, "snapshot_path", None))
     return _publication_payload(publication, version)
+
+
+async def list_published_publications(session: AsyncSession) -> list[dict[str, Any]]:
+    """列出**当前已发布**的公共技能，供管理端「下架」列表使用。
+
+    判据是**版本事实**：``version.status == "APPROVED"`` 且版本号正是
+    ``publication.current_version``。刻意不再要求 ``publication.status == "PUBLISHED"``
+    ——那条汇总状态会被"作者又提交了一版"改写成 PENDING（老数据里已经被写坏），
+    用它过滤会让仍然在线、且必须能下架的技能从列表里消失。``SUPERSEDED`` 的历史版本、
+    ``REJECTED``/``WITHDRAWN``/``REVOKED`` 的版本都不该出现在可下架列表里
+    （对它们下架没有意义，只会得到 409）。
+    """
+    result = await session.execute(
+        select(SkillPublicationVersion, SkillPublication)
+        .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
+        .where(
+            SkillPublicationVersion.status == "APPROVED",
+            SkillPublicationVersion.version_number == SkillPublication.current_version,
+        )
+        .order_by(desc(SkillPublicationVersion.published_at))
+    )
+    return [
+        {
+            "publication_id": publication.id,
+            "version_id": version.id,
+            "skill_id": publication.source_personal_skill_id,
+            "platform_skill_id": publication.platform_skill_id,
+            "name": publication.name,
+            "description": publication.description or "",
+            "publication_status": "PUBLISHED",
+            "version_number": version.version_number,
+            "source_user_id": publication.source_user_id,
+            "submitted_by": version.submitted_by,
+            "published_at": version.published_at.isoformat() if version.published_at else None,
+            "reviewed_by": version.reviewed_by,
+            "file_count": version.file_count,
+            "total_size": version.total_size,
+        }
+        for version, publication in result.all()
+    ]
+
+
+def _assert_current_published(version: SkillPublicationVersion, publication: SkillPublication) -> None:
+    """下架前的状态校验：只有「当前已发布版本」能下架，其余一律 409（而不是 500）。"""
+    if version.status == "REVOKED":
+        raise PublicationConflictError("publication version is already revoked")
+    # 只看版本事实，不看 publication.status：那条汇总状态可能因为"又提交了一版"而被写成
+    # PENDING（老缺陷留下的数据），此处若跟着它判，正在线上服务的版本就永远下架不掉。
+    if (
+        version.status != "APPROVED"
+        or publication.current_version != version.version_number
+    ):
+        raise PublicationConflictError("publication version is not the current published version")
+
+
+async def revoke_published_version(
+    session: AsyncSession,
+    *,
+    version_id: str,
+    reviewer: dict[str, Any],
+    comment: str,
+) -> dict[str, Any]:
+    """下架一个已发布的平台技能版本，返回该发布谱系的 payload。
+
+    语义（与「删除个人技能」「删除平台技能」都不同）：
+    * **删除已物化的平台技能目录**——技能必须真的从公共库消失，否则运行时照样能扫到；
+    * ``skill_publication_versions.status = "REVOKED"``、``skill_publications.status =
+      "UNPUBLISHED"``，写 ``revoked_at`` / ``revoked_by``；
+    * **保留** ``platform_skill_id`` 与 ``snapshot_path``：作者重新提交、审核通过时复用同一个
+      ``platform_skill_id``（``approve_publication`` 只在它为 None 时才新生成），目录名因此
+      保持稳定，历史引用（智能体白名单、会话挂载）在重新上架后重新生效；
+    * 下架原因写入 ``review_comment``，作者端 ``_publication_payload`` 会把它作为
+      ``last_review_comment`` 展示，状态显示为 ``REVOKED``（已下架）。
+
+    重复下架是**幂等**的：第二次调用命中 ``_assert_current_published`` 后返回 409，不会 500。
+    """
+    if not (comment or "").strip():
+        raise ValueError("revoke comment is required")
+    result = await session.execute(
+        select(SkillPublicationVersion, SkillPublication)
+        .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
+        .where(SkillPublicationVersion.id == version_id)
+        # 行锁：并发下架（或"下架 vs 重新提交"）时第二个必须重读到最新状态
+        .with_for_update()
+    )
+    row = result.first()
+    if not row:
+        raise PublicationNotFoundError("publication version not found")
+    version, publication = row
+    _assert_current_published(version, publication)
+
+    platform_id = publication.platform_skill_id
+    if not platform_id:
+        # 已发布版本必然有平台技能 ID；缺失说明数据被人工改坏，明确报冲突而不是删错目录
+        raise PublicationConflictError("published version has no platform skill id")
+    # 先校验再改库：ID 不合法要立刻失败，不能先写状态再抛异常
+    try:
+        validate_skill_id(platform_id)
+    except SkillRenameError as exc:
+        # 数据被人工改坏（平台技能 ID 非法）：报冲突让管理员人工核对，既不要 500，也不能删错目录
+        raise PublicationConflictError(
+            f"published version has an illegal platform skill id: {exc}"
+        ) from exc
+    # 记录物化位置后置空（下面删目录还要用原始值）
+    recorded_path = version.materialized_path
+
+    now = datetime.now()
+    version.status = "REVOKED"
+    version.review_comment = comment.strip()
+    version.reviewed_by = _user_id(reviewer)
+    version.reviewed_at = now
+    publication.status = "UNPUBLISHED"
+    publication.current_version = None
+    publication.revoked_at = now
+    publication.revoked_by = _user_id(reviewer)
+    publication.updated_at = now
+    await session.flush()
+    # 先 flush 再删目录：flush 失败时目录原样保留（整个事务回滚，DB 与磁盘一致）；
+    # 反过来的顺序一旦 flush 失败，就会出现「目录已删、库里仍写着已发布」。
+    remove_materialized_skill(
+        platform_skill_id=platform_id, materialized_path=recorded_path
+    )
+    # 目录已删，物化位置如实置空（下架后由重新审核重新物化）
+    version.materialized_path = None
+    return _publication_payload(publication, version)
+
+
+async def mark_platform_skill_publications_revoked(
+    session: AsyncSession,
+    *,
+    platform_skill_id: str,
+    actor_user_id: int | None = None,
+    comment: str | None = None,
+) -> int:
+    """把某个平台技能名下**仍处于 PUBLISHED** 的发布谱系标记为 REVOKED，返回条数。
+
+    删除平台技能目录时复用下架语义，而不是物理删发布记录：
+
+    * 删除记录会毁掉审核审计轨迹（谁提交、谁审核、审核意见全没了），也没有任何备份；
+    * ``platform_skill_id`` 是唯一索引，记录删掉后作者重新提交同一技能会拿到一个**全新的**
+      平台技能 ID，历史发布与技能对不上，智能体白名单/会话挂载也永远回不来；
+    * 保留 ``platform_skill_id`` + ``snapshot_path``，删除后重新提交并通过审核即可复用同一
+      ID 重新物化——「技能没了但发布能力还在」正是下架的定义。
+
+    非 PUBLISHED（PENDING/UNPUBLISHED/REVOKED）的谱系一律不动。
+    """
+    result = await session.execute(
+        select(SkillPublication).where(
+            SkillPublication.platform_skill_id == platform_skill_id,
+            SkillPublication.status == "PUBLISHED",
+        )
+    )
+    publications = list(result.scalars().all())
+    if not publications:
+        return 0
+    now = datetime.now()
+    for publication in publications:
+        publication.status = "UNPUBLISHED"
+        publication.current_version = None
+        publication.revoked_at = now
+        publication.revoked_by = actor_user_id
+        publication.updated_at = now
+    publication_ids = [publication.id for publication in publications]
+    versions = await session.execute(
+        select(SkillPublicationVersion).where(
+            SkillPublicationVersion.publication_id.in_(publication_ids),
+            SkillPublicationVersion.status == "APPROVED",
+        )
+    )
+    for version in versions.scalars().all():
+        version.status = "REVOKED"
+        version.reviewed_at = now
+        version.materialized_path = None
+        if comment and not (version.review_comment or "").strip():
+            version.review_comment = comment
+    await session.commit()
+    return len(publications)
+
+
+async def list_active_platform_skills_for_personal_skill(
+    session: AsyncSession, *, user_id: int, skill_id: str
+) -> list[str]:
+    """返回该个人技能当前在平台上**仍处于发布态**的 ``platform_skill_id`` 列表。
+
+    删除个人副本时用它给用户一句实话：个人技能删掉后平台上的那一份照样在跑，要下架得走
+    技能管理端的下架功能（不能让用户以为「删了个人技能 = 技能没了」）。
+    """
+    result = await session.execute(
+        select(SkillPublication.platform_skill_id).where(
+            SkillPublication.source_user_id == int(user_id),
+            SkillPublication.source_personal_skill_id == skill_id,
+            SkillPublication.status == "PUBLISHED",
+            SkillPublication.platform_skill_id.isnot(None),
+        )
+    )
+    return [str(item) for item in result.scalars().all() if item]

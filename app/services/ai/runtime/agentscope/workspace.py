@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import fnmatch
 import hashlib
@@ -10,6 +11,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 import uuid
 from collections.abc import Mapping
@@ -41,18 +43,45 @@ _k8s_workspace_last_used: dict[str, float] = {}
 _k8s_workspace_reaper_task: asyncio.Task[None] | None = None
 _workspace_sandbox_refs: dict[str, str] = {}
 _docker_workspace_reaper_task: asyncio.Task[None] | None = None
+#: 用户级（``<root>/<user_key>``）宿主机准备锁：见 :func:`_sandbox_host_prepare_lock`。
+_sandbox_host_prepare_locks: dict[str, asyncio.Lock] = {}
+
+
+def _sandbox_host_prepare_lock(host_workdir: str) -> asyncio.Lock:
+    """取该用户工作区的「宿主机准备」锁（键即 ``<root>/<user_key>``）。
+
+    细粒度的缓存键锁只保证「同一技能集合不会被并发建两次」，但同一用户的**多个技能
+    集合**会并发读写同一份宿主目录：个人技能源、公共文档目录、以及历史单份布局的一次性
+    迁移（``os.rename``）。两个协程同时判断「历史目录还在、没有兄弟目录」再各自 rename，
+    就会有一个撞 FileNotFoundError（虽有兜底，但语义靠运气）。这里把这段准备动作串起来。
+
+    只覆盖**同步的目录准备**（不含 await），因此不可能自我重入死锁；构建容器/ Pod 的
+    长耗时部分仍在各自的缓存键锁里并行执行。
+    """
+    key = os.path.abspath(host_workdir)
+    lock = _sandbox_host_prepare_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _sandbox_host_prepare_locks[key] = lock
+    return lock
+
 
 DOCKER_WORKSPACE_INIT_RETRY_DELAY_SECONDS = 0.5
-K8S_WORKSPACE_IDLE_SECONDS = 1800.0
+K8S_WORKSPACE_IDLE_SECONDS = 900.0
 K8S_WORKSPACE_REAPER_INTERVAL_SECONDS = 60.0
 
-#: 沙箱空闲回收可配置：分钟（docker/k8s 共用）。默认 30 分钟，对应上方 1800s。
+#: 沙箱空闲回收可配置：分钟（docker/k8s 共用）。默认 15 分钟，对应上方 900s。
 SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"
-SANDBOX_IDLE_TIME_DEFAULT_MINUTES = 30
+SANDBOX_IDLE_TIME_DEFAULT_MINUTES = 15
 
 
-async def _effective_sandbox_idle_seconds(*, default_seconds: float) -> float:
-    """读取 ``sandbox_idle_time``（分钟）并换算为秒；非法/未配置时回退到默认秒。"""
+async def resolve_effective_sandbox_idle_seconds(*, default_seconds: float) -> float:
+    """读取 ``sandbox_idle_time``（分钟）并换算为秒；非法/未配置时回退到默认秒。
+
+    这是「沙箱空闲多久被回收」的**唯一真相来源**：回收器、执行期心跳与前端浮标文案
+    都必须经过它，避免展示口径与实际回收口径漂移（历史上浮标把 30 分钟写死在组件里，
+    管理台改成 15 分钟后界面仍在说 30m）。
+    """
     from app.services.config_service import ConfigService
 
     try:
@@ -66,6 +95,10 @@ async def _effective_sandbox_idle_seconds(*, default_seconds: float) -> float:
     except (TypeError, ValueError):
         pass
     return float(default_seconds)
+
+
+#: 兼容既有引用（历史测试与调用点仍按旧名访问）；新代码请用公共名。
+_effective_sandbox_idle_seconds = resolve_effective_sandbox_idle_seconds
 
 
 class DockerSandboxUnavailableError(RuntimeError):
@@ -468,42 +501,151 @@ def _forbidden_skill_hashes(forbidden_skill_ids: Iterable[str] | None) -> set[st
     return hashes
 
 
-def _entry_is_forbidden(entry: Any, forbidden_ids: set[str]) -> bool:
+def _personal_skill_hash_index(user_info: dict | None) -> dict[str, set[str]]:
+    """当前用户**启用中**的个人技能：``技能 id -> {SKILL.md 内容哈希}``。
+
+    用途见 :func:`_entry_is_forbidden`：账本里只记了 ``skill_id``，而个人技能可以与公共
+    技能同名（产品口径是"禁的是平台发布的那一份，用户自建的同名技能照旧可用"）。要判断
+    某条账本记录是不是"同 id 的个人副本"，只能拿内容哈希比：个人副本的哈希正常情况下就
+    与平台那一份不同，被禁/改版之后更不会相等。
+
+    只收**启用中**的个人技能：个人技能自己写了 ``enabled: false`` 时同样不该被这个保护伞
+    留下（沙箱侧靠 ``skill_paths`` 过滤，这里靠哈希索引过滤）。
+    """
+    hashes: dict[str, set[str]] = {}
+    if not user_info:
+        return hashes
+    try:
+        from app.services.ai.skill_resolver import (
+            get_user_personal_skills_dir,
+            iter_personal_skill_dirs,
+        )
+
+        personal_dir = get_user_personal_skills_dir(user_info)
+        if not personal_dir or not os.path.isdir(personal_dir):
+            return hashes
+        from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
+
+        for entry, skill_dir in iter_personal_skill_dirs(personal_dir):
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            if not os.path.isfile(skill_md):
+                continue
+            if not is_skill_enabled(parse_skill_frontmatter(entry, skill_md)):
+                continue
+            with open(skill_md, "rb") as fh:
+                content = fh.read().decode("utf-8", errors="ignore")
+            key = str(entry).strip()
+            if key:
+                hashes.setdefault(key, set()).add(
+                    hashlib.sha256(content.encode("utf-8")).hexdigest()
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] Failed to index personal skills for pruning: %s", exc)
+        return {}
+    return hashes
+
+
+def _disabled_platform_skill_ids(skill_ids: Iterable[str]) -> set[str]:
+    """给定 id 里，被管理端 ``enabled: false`` 禁用的**公共**技能。
+
+    管理端「禁用」改的是 SKILL.md 的 frontmatter，**不进**权限禁用集合
+    （``forbidden_skills``），因此只看权限集合的清理路径完全看不到它：沙箱侧靠公共技能库
+    内容指纹失效能修掉，但宿主会话目录（``<workdir>/skills/.seed``）里的旧副本会一直留着，
+    模型用 Read/Glob 以相对路径就能读到。这里把两种"禁用"渠道合成同一个「对任何智能体都
+    不可用」的判据。
+
+    只解析调用方给的 id（通常就是会话账本里那几个），不做全库扫描。
+    """
+    disabled: set[str] = set()
+    wanted = {str(item).strip() for item in (skill_ids or ()) if str(item).strip()}
+    if not wanted:
+        return disabled
+    try:
+        from app.core.config import settings
+
+        root = getattr(settings, "SKILLS_DIR", None)
+    except Exception:  # noqa: BLE001
+        return disabled
+    if not root:
+        return disabled
+    from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
+
+    for skill_id in wanted:
+        skill_md = os.path.join(str(root), skill_id, "SKILL.md")
+        if not os.path.isfile(skill_md):
+            continue
+        try:
+            if not is_skill_enabled(parse_skill_frontmatter(skill_id, skill_md)):
+                disabled.add(skill_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[workspace] Failed to read enabled state of %s: %s", skill_id, exc)
+    return disabled
+
+
+def _entry_is_forbidden(
+    entry: Any,
+    forbidden_ids: set[str],
+    *,
+    personal_hashes: dict[str, set[str]] | None = None,
+) -> bool:
     """索引条目是否**确定**属于被禁的公共技能。
 
     只按内容哈希判定会连坐个人技能：把平台技能目录逐字节复制成个人技能后哈希相同，
     那个会话快照会被静默删除，而产品口径是"禁的是平台发布的那一份"、个人技能照旧可用。
     索引里记了来源 ``skill_id`` 就按 id 复核；旧索引没有该字段时退回哈希判定，
     行为与改动前保持一致（不会因为升级而漏清理）。
+
+    ``personal_hashes``（见 :func:`_personal_skill_hash_index`）给出"同 id 的个人副本"的
+    内容哈希：命中就**不算**被禁。**判定以 id 为权威、内容哈希只用于区分来源**——此前要求
+    "账本哈希 == 该技能当前文件的哈希"才是被禁，于是"技能内容改过之后才禁用"永远清不掉
+    （账本记的是播种时的哈希，两侧对不上），会话里会永久残留一份可读的被禁技能。
     """
     if not forbidden_ids:
         return False
-    recorded = str((entry or {}).get("skill_id") or "").strip()
+    entry = entry or {}
+    recorded = str(entry.get("skill_id") or "").strip()
     if not recorded:
         return True
-    return recorded in forbidden_ids
+    if recorded not in forbidden_ids:
+        return False
+    entry_hash = str(entry.get("hash") or "")
+    if entry_hash and entry_hash in (personal_hashes or {}).get(recorded, set()):
+        return False
+    return True
 
 
 def _prune_stale_session_skills(
     skill_root: str,
     index_path: str,
     forbidden_hashes: set[str] | None,
-    forbidden_skill_ids: Iterable[str] | None = None,
+    unavailable_skill_ids: Iterable[str] | None = None,
+    *,
+    personal_hashes: dict[str, set[str]] | None = None,
 ) -> int:
-    """清理会话技能快照里**已被禁用**的技能，返回清理条数。
+    """清理会话技能快照里**已不可用**的技能，返回清理条数。
 
-    权限在进程存活期间可以被收紧，而"权限收紧之前"铺好的技能会一直留在会话目录里，
-    agent 直接读文件就绕过了禁用。这里按被禁技能的内容哈希反向清理。
+    权限可以在进程存活期间被收紧，而"权限收紧之前"铺好的技能会一直留在会话目录里，
+    agent 直接读文件就绕过了禁用。这里的 ``unavailable_skill_ids`` 是「对任何智能体都
+    不可用」的公共技能 id 集合，由调用方合成两条渠道：
 
-    判定必须用**内容哈希**而不是目录名：快照目录名是 ``sanitize(SKILL.md 的 name)``，
-    跟技能 id 没关系，而且 name 冲突时还会带 ``_1`` 后缀——只有哈希是可靠的对应关系
-    （播种逻辑也正是按哈希判重的）。
+    * 权限禁用集合（``forbidden_skills``，用户级 + 角色级）；
+    * 管理端 ``enabled: false``（frontmatter）——见 :func:`_disabled_platform_skill_ids`。
 
-    只删"确定被禁"的项，**绝不**把"当前请求没允许的"当成陈旧：那会误删同一会话里其他
-    智能体的技能（见 ``_forbidden_skill_hashes`` 的说明）。``forbidden_hashes`` 为空时
-    直接返回 0。
+    **判定以来源 id 为权威**：账本里记了 ``skill_id``（= 源目录 basename）就按 id 删，
+    内容哈希只用来区分"同 id 的个人副本"（见 :func:`_entry_is_forbidden`）。早期实现要求
+    "账本哈希 == 该技能**当前**文件哈希"，于是「内容改过之后才禁用」两侧永远对不上，
+    会话里会永久残留一份可读的被禁技能；反过来只认哈希也会因为改名/改版而漏清。
+    老账本（无 ``skill_id``）没有来源信息，只能退回内容哈希判定，与改动前一致。
+
+    ``forbidden_hashes`` 为空时**不再直接返回 0**：来源 id 已知的条目不需要哈希也能清
+    （源文件暂时读不出来时尤其重要）。两条依据都为空才什么都不做。
     """
-    if not forbidden_hashes:
+    unavailable_ids = {
+        str(skill_id).strip()
+        for skill_id in (unavailable_skill_ids or ())
+        if str(skill_id).strip()
+    }
+    if not forbidden_hashes and not unavailable_ids:
         return 0
 
     try:
@@ -517,15 +659,18 @@ def _prune_stale_session_skills(
     if not isinstance(stored, dict):
         return 0
 
-    forbidden_ids = {
-        str(skill_id).strip() for skill_id in (forbidden_skill_ids or ()) if str(skill_id).strip()
-    }
-    stale = [
-        dir_name
-        for dir_name, entry in stored.items()
-        if str((entry or {}).get("hash") or "") in forbidden_hashes
-        and _entry_is_forbidden(entry, forbidden_ids)
-    ]
+    stale = []
+    for dir_name, entry in stored.items():
+        if not _entry_is_forbidden(
+            entry, unavailable_ids, personal_hashes=personal_hashes
+        ):
+            continue
+        # 老账本没有 skill_id：只能退回内容哈希判定（与改动前一致）
+        if not str((entry or {}).get("skill_id") or "").strip():
+            entry_hash = str((entry or {}).get("hash") or "")
+            if entry_hash not in (forbidden_hashes or set()):
+                continue
+        stale.append(dir_name)
     if not stale:
         return 0
 
@@ -545,31 +690,202 @@ def _prune_stale_session_skills(
     return len(stale)
 
 
+def _prune_removed_session_skills(
+    skill_root: str,
+    skills: dict[str, dict[str, str]],
+    current_skill_ids: set[str],
+    *,
+    source_roots: Iterable[str] | None = None,
+) -> list[str]:
+    """清理会话技能快照里**来源目录确实已不存在**的技能，返回被清理的目录名。
+
+    播种逻辑只做「新增/改版」，从不删：公共技能被删除（或下架）之后，旧副本会一直留在
+    会话的 ``.seed`` 里，模型一个 ``ls`` 就能读到甚至执行——平台侧已经认为「这个技能
+    不存在」，会话目录里却还在。这里按账本里的 ``skill_id``（= 来源目录 basename）判断
+    来源是否还在。
+
+    **判据刻意不是「不在本次可用集合里」**（那是上一版实现，被现有契约测试否掉）：
+    同一会话里不同智能体各有自己的可用集合，窄白名单那次播种绝不能删掉别的智能体铺下的
+    技能（``test_preseed_does_not_delete_another_agents_skills_in_the_same_session``）。
+    因此只有「既不在本次可用集合里、**且**在所有已知技能源根下都找不到」才删——真正被
+    删除的技能落在这里，白名单收窄与源目录暂时读不到都不会。
+
+    只动**账本里登记过**的条目：``.seed`` 下未登记的目录可能来自别处（历史数据或
+    人工放置），不属于本函数的职责范围，宁可不删。``skill_id`` 缺失的老账本条目同样
+    跳过——无法判断来源就不能删。
+
+    ``current_skill_ids`` 为空集表示"本次没有可用集合可参考"（缓存命中路径就是这种情形：
+    那里只拿到了会话，没有该智能体的白名单），此时**只按来源是否存在**判定——删一个条目
+    仍然要求它在所有已知技能源根下都找不到，因此不会误伤同会话里别的智能体的技能。
+    """
+    if not skills:
+        # 没有任何账本条目时一律不动。
+        return []
+    roots = [
+        str(root)
+        for root in (source_roots or ())
+        if root and os.path.isdir(str(root))
+    ]
+    if not roots:
+        return []
+
+    def _source_exists(skill_id: str) -> bool:
+        for root in roots:
+            # 来源目录**存在**即算"技能仍在"：SKILL.md 暂时读不到（正在复制、IO 抖动、
+            # 权限位异常）时宁可留着等下次再判，也不能把会话副本误删成"技能消失"。
+            # 真正被删除的技能连目录都不会剩（删除路径走 rmtree）。
+            if os.path.isdir(os.path.join(root, skill_id)):
+                return True
+            # 个人技能源可能仍是历史 ``.seed`` 布局（见 skill_resolver.iter_personal_skill_dirs）
+            if os.path.isdir(
+                os.path.join(root, SANDBOX_SKILL_SEED_DIR_NAME, skill_id)
+            ):
+                return True
+        return False
+
+    stale = []
+    for dir_name, entry in skills.items():
+        skill_id = str((entry or {}).get("skill_id") or "").strip()
+        if not skill_id:
+            continue
+        if current_skill_ids and skill_id in current_skill_ids:
+            continue
+        if _source_exists(skill_id):
+            continue
+        stale.append(dir_name)
+    if not stale:
+        return []
+    for dir_name in stale:
+        shutil.rmtree(os.path.join(skill_root, dir_name), ignore_errors=True)
+        skills.pop(dir_name, None)
+    logger.info(
+        "[workspace] Pruned %d session skill(s) whose source disappeared: %s",
+        len(stale),
+        stale,
+    )
+    return stale
+
+
+def _session_skill_source_roots(user_info: dict | None) -> list[str]:
+    """会话技能快照的可能来源根：平台公共技能库 + 当前用户的个人技能库。
+
+    用于判断"账本里这条记录的来源还在不在"（见 :func:`_prune_removed_session_skills`）。
+    只列**存在**的目录——任何根都读不到时那个函数会直接放弃清理，宁可少清一次。
+    """
+    roots: list[str] = []
+    try:
+        from app.core.config import settings
+
+        skills_dir = getattr(settings, "SKILLS_DIR", None)
+        if skills_dir and os.path.isdir(str(skills_dir)):
+            roots.append(str(skills_dir))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] Failed to resolve platform skills root: %s", exc)
+    try:
+        from app.utils.fs_access import get_platform_skills_root
+
+        platform_root = get_platform_skills_root()
+        if platform_root and os.path.isdir(str(platform_root)):
+            roots.append(str(platform_root))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] Failed to resolve platform skills root: %s", exc)
+    if user_info:
+        try:
+            from app.services.ai.skill_resolver import get_user_personal_skills_dir
+
+            personal_dir = get_user_personal_skills_dir(user_info)
+            if personal_dir and os.path.isdir(str(personal_dir)):
+                roots.append(str(personal_dir))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[workspace] Failed to resolve personal skills root: %s", exc)
+    # 去重但保持顺序
+    return list(dict.fromkeys(roots))
+
+
+def _prune_removed_session_skills_from_ledger(
+    workdir: str, index_path: str, user_info: dict | None
+) -> int:
+    """缓存命中路径上的"来源已消失"清理（配合 :func:`_prune_removed_session_skills`）。
+
+    为什么必须在这条路径上也清：工作区缓存命中时**不会**走播种逻辑，而"删除/下架技能"
+    既不进权限禁用集合、也不改会话目录，于是源目录已消失的技能会永久留在会话 ``.seed``
+    里（模型 `Glob("**/SKILL.md")` 就能翻出来）。判据只有一条——来源目录在所有已知技能
+    源根下都不存在，因此不需要该智能体的白名单（传空集合即可）。
+    """
+    try:
+        with open(index_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as exc:
+        logger.debug("[workspace] Failed to read session skills ledger: %s", exc)
+        return 0
+    skills = data.get("skills")
+    if not isinstance(skills, dict):
+        return 0
+    roots = _session_skill_source_roots(user_info)
+    if not roots:
+        return 0
+    removed = _prune_removed_session_skills(
+        _session_skill_seed_dir(workdir),
+        skills,
+        set(),
+        source_roots=roots,
+    )
+    if not removed:
+        return 0
+    try:
+        data["skills"] = skills
+        with open(index_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning(
+            "[workspace] Failed to sync session skills ledger after removal pruning: %s", exc
+        )
+    return len(removed)
+
+
 async def _prune_forbidden_session_skills(workdir: str, user_info: dict | None) -> None:
-    """在工作区缓存命中时也清一次被禁技能的会话快照。
+    """在工作区缓存命中时也清一次会话快照里已不可用的技能。
 
     工作区缓存的 key 是 ``workdir::skills_fp::policy``，命中即直接 return，不会走播种逻辑；
     而权限可以在进程存活期间被收紧，于是"禁用前铺好的快照"会一直留在磁盘上，被 Read/Glob
-    或 Bash 直接读到——禁用形同虚设。这里补上这一半。
+    或 Bash 直接读到——禁用形同虚设。这里补上这一半，覆盖三种"平台已认为不可用"：
+
+    ① 权限禁用（``forbidden_skills``，用户级 + 角色级）；
+    ② 管理端 ``enabled: false``（frontmatter，不进权限集合，原先完全漏掉）；
+    ③ 来源目录已被删除/下架（原先只有播种路径会清，缓存命中时永久残留）。
     """
     skill_root = _session_skill_seed_dir(workdir)
     index_path = _session_skills_ledger_path(workdir)
-    if not os.path.isfile(index_path):
+    legacy_index_path = _legacy_session_skills_index_path(workdir)
+    if not os.path.isfile(index_path) and not os.path.isfile(legacy_index_path):
         return
+    prune_index_path = index_path if os.path.isfile(index_path) else legacy_index_path
+    # ③ 与权限无关，先做：即便权限查询失败也不影响"源已删除"这条硬事实
+    _prune_removed_session_skills_from_ledger(workdir, prune_index_path, user_info)
     try:
         from app.services.ai.skills.policy import get_forbidden_skill_ids
 
         forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
     except Exception as exc:
         logger.warning("[workspace] Failed to resolve forbidden skills for pruning: %s", exc)
-        return
-    if not forbidden_skill_ids:
+        forbidden_skill_ids = set()
+    # ② 管理端禁用只解析账本里出现过的 id，不做全库扫描
+    ledger_ids = _read_session_skills_ledger(workdir)
+    unavailable_ids = {
+        str(item).strip() for item in (forbidden_skill_ids or ()) if str(item).strip()
+    }
+    unavailable_ids |= _disabled_platform_skill_ids(
+        str((entry or {}).get("skill_id") or "").strip()
+        for entry in ledger_ids.values()
+    )
+    if not unavailable_ids:
         return
     _prune_stale_session_skills(
         skill_root,
-        index_path,
-        _forbidden_skill_hashes(forbidden_skill_ids),
-        forbidden_skill_ids,
+        prune_index_path,
+        _forbidden_skill_hashes(unavailable_ids),
+        unavailable_ids,
+        personal_hashes=_personal_skill_hash_index(user_info),
     )
     _prune_session_skill_partitions(workdir)
 
@@ -700,7 +1016,10 @@ def _same_origin_skill_dir(
 
 
 def _preseed_session_skills(
-    workdir: str, skill_paths: list[str], forbidden_skill_ids: Iterable[str] | None = None
+    workdir: str,
+    skill_paths: list[str],
+    forbidden_skill_ids: Iterable[str] | None = None,
+    user_info: dict | None = None,
 ) -> None:
     """把平台技能快照铺进 ``<workdir>/skills/.seed``（AgentScope 的 seed 模板）。
 
@@ -739,11 +1058,21 @@ def _preseed_session_skills(
     pruned = 0
     prune_index_path = index_path if os.path.isfile(index_path) else legacy_index_path
     if os.path.isfile(prune_index_path):
+        # 两种"禁用"都要清：权限禁用集合 + 管理端 enabled=false（原先只有前者）。
+        # 同 id 的个人技能靠内容哈希识别并保留（见 _entry_is_forbidden）。
+        unavailable_ids = {
+            str(item).strip() for item in (forbidden_skill_ids or ()) if str(item).strip()
+        }
+        unavailable_ids |= _disabled_platform_skill_ids(
+            str((entry or {}).get("skill_id") or "").strip()
+            for entry in _read_session_skills_ledger(workdir).values()
+        )
         pruned = _prune_stale_session_skills(
             seed_dir,
             prune_index_path,
-            _forbidden_skill_hashes(forbidden_skill_ids),
-            forbidden_skill_ids,
+            _forbidden_skill_hashes(unavailable_ids),
+            unavailable_ids,
+            personal_hashes=_personal_skill_hash_index(user_info),
         )
 
     # 以**清理之后**的账本为权威重新读：否则刚被删掉的被禁条目会被内存里的旧副本写回去
@@ -893,6 +1222,34 @@ def _preseed_session_skills(
         existing_dir_names.add(dir_name)
         updated = True
 
+    # 来源已经消失的技能（公共技能被删除/下架、个人技能被删）必须从快照里清掉，否则模型
+    # 仍能在会话目录里读到平台认为不存在的技能。放在复制之后：这样"改版"走的就地替换路径
+    # 已经更新过账本，不会被这里误删。判据是"源目录在磁盘上确实不存在"，不是"不在本次
+    # 白名单里"（见函数 docstring）。
+    current_skill_ids = {
+        os.path.basename(os.path.normpath(str(path)))
+        for path in skill_paths
+        if str(path).strip()
+    }
+    source_roots = {
+        os.path.dirname(os.path.abspath(str(path)))
+        for path in skill_paths
+        if str(path).strip()
+    }
+    try:
+        from app.utils.fs_access import get_platform_skills_root
+
+        platform_root = get_platform_skills_root()
+    except Exception:  # noqa: BLE001
+        platform_root = None
+    if platform_root:
+        source_roots.add(str(platform_root))
+    removed = _prune_removed_session_skills(
+        seed_dir, existing, current_skill_ids, source_roots=sorted(source_roots)
+    )
+    if removed:
+        updated = True
+
     if updated or migrated or pruned or ledger_moved:
         try:
             mtime = os.stat(seed_dir).st_mtime
@@ -929,7 +1286,7 @@ SANDBOX_POLICY_DOCKER = "docker"
 SANDBOX_POLICY_K8S = "k8s"
 SANDBOX_POLICY_E2B = "e2b"
 SANDBOX_POLICY_SSH = "ssh"
-DOCKER_WORKSPACE_IDLE_SECONDS = 30 * 60
+DOCKER_WORKSPACE_IDLE_SECONDS = 15 * 60
 DOCKER_WORKSPACE_REAPER_INTERVAL_SECONDS = 60
 KNOWN_SANDBOX_POLICIES = frozenset(
     {
@@ -977,28 +1334,93 @@ def _resolve_docker_sandbox_host_workdir(
     return os.path.join(abs_root, sandbox_user_key)
 
 
+def _sandbox_skills_host_workdir(root: str, user_key: str, policy: str) -> str:
+    """沙箱技能目录 / 指纹文件所在的**工作区根**（必须与创建侧同一口径）。
+
+    为什么单独抽一个函数：DooD（平台自己跑在容器里）部署下，创建沙箱时下发给 Docker
+    Daemon 的挂载源是 ``HOST_DATA_DIR`` 映射后的**宿主机物理路径**
+    （:func:`_resolve_docker_sandbox_host_workdir`），技能目录、``.seed`` 与指纹文件全都
+    写在那个路径上。核对 / 回收侧若图省事用容器内路径 ``<root>/<user_key>``，读到的就是
+    **创建侧从不写的那棵树**：``recorded`` 恒为空 → 核对判「最新」→ 本轮新增的权限治理
+    在这类部署上静默失效；GC 反过来还会作用在真实的租户目录上而判据取自影子目录。
+
+    K8s 走 PVC 内的容器路径（subPath 由 Daemon 侧解析），不做宿主机映射。
+    """
+    if str(policy or "") == SANDBOX_POLICY_K8S:
+        return os.path.join(os.path.abspath(root), user_key)
+    return (
+        _resolve_docker_sandbox_host_workdir(root, user_key)
+        or os.path.join(os.path.abspath(root), user_key)
+    )
+
+
 def _personal_skills_dir(host_workdir: str) -> str:
     """Return the canonical personal skills source under a user workspace."""
     return os.path.join(os.path.abspath(host_workdir), "skills")
 
 
-def _sandbox_skills_dir(host_workdir: str) -> str:
+def _sandbox_skills_dir(host_workdir: str, layout: str | None = None) -> str:
     """Return the Docker-only materialized skills directory.
 
     This directory intentionally contains the merged public + personal skill
     snapshot used by the sandbox. It must never be used as the personal-skill
     API source.
+
+    ``layout`` = 技能集合令牌：每个技能集合一份独立目录，容器名/Pod 名同源。
+    共用一份目录时，两个集合的容器会互相 rmtree 对方的 ``.seed``、互相把半成品
+    记成"最新"，而且模型能在 ``.seed`` 里读到不属于自己的技能。缺省（``None``）
+    即历史单份布局 ``sandbox/skills``。
     """
+    name = "skills" if not layout else f"skills-{layout}"
     return os.path.join(
         os.path.abspath(host_workdir),
         DOCKER_SANDBOX_DIR_NAME,
-        "skills",
+        name,
     )
+
+
+def _migrate_legacy_sandbox_skills_dir(host_workdir: str, layout: str | None) -> None:
+    """把历史单份布局 ``sandbox/skills`` 整体迁移到带令牌的技能目录。
+
+    分片之前所有技能集合共用 ``sandbox/skills``：里面既有 seed 模板，也有 AgentScope
+    已装备的分区（agent 用技能 API **自建**的技能就落在分区里，平台技能库里没有它们）。
+    直接改用新目录会让这些自建技能凭空消失，所以在该用户**还没有任何带令牌目录**时，
+    把历史目录整体改名过来（``os.rename`` 同一文件系统内是原子的；已在运行的容器按
+    inode 持有 bind mount，不受影响）。
+
+    已经存在 ``skills-*`` 兄弟目录时不动历史目录：那可能是另一个技能集合正在用的目录，
+    删改它等于破坏别人的沙箱。此时退化为各自使用新目录（另见「历史目录不自动清理」）。
+    """
+    if not layout:
+        return
+    legacy = _sandbox_skills_dir(host_workdir)
+    target = _sandbox_skills_dir(host_workdir, layout)
+    if os.path.exists(target) or not os.path.isdir(legacy):
+        return
+    parent = os.path.dirname(target)
+    try:
+        siblings = [name for name in os.listdir(parent) if name.startswith("skills-")]
+    except OSError:
+        return
+    if siblings:
+        return
+    try:
+        os.rename(legacy, target)
+    except OSError as exc:  # noqa: BLE001
+        logger.warning(
+            "[workspace] Failed to migrate legacy skills dir %s -> %s: %s",
+            legacy,
+            target,
+            exc,
+        )
+        return
+    logger.info("[workspace] Migrated legacy sandbox skills dir %s -> %s", legacy, target)
 
 
 def _build_docker_workspace_mounts(
     host_workdir: str,
     public_docs_source: str | None = None,
+    layout: str | None = None,
 ) -> list[tuple[str, str, str]]:
     """Build the Docker bind mounts while keeping source roots separate.
 
@@ -1006,18 +1428,21 @@ def _build_docker_workspace_mounts(
 
     1. the user workspace at ``/workspace`` (rw);
     2. the **merged runtime skills snapshot** at ``/workspace/skills`` (rw) —
-       ``<workdir>/sandbox/skills``, which AgentScope fills with a one-off
-       ``.seed`` template. It shadows ``<workdir>/skills`` underneath
+       ``<workdir>/sandbox/skills[-<layout>]``, which AgentScope fills with a
+       one-off ``.seed`` template. It shadows ``<workdir>/skills`` underneath
        ``/workspace``, so the personal-skill source is *not* reachable there;
     3. the **personal skill source** at ``/workspace/personal-skills`` (ro) —
        mounted read-only so a sandboxed agent can execute a skill's bundled
        scripts straight from the source, without waiting for the next ``.seed``
        rebuild or copying files around first.
+
+    ``layout``（技能集合令牌）让物理沙箱与缓存条目一一对应：不同技能集合的容器
+    各自挂载自己的 skills 目录，不再互相覆盖 ``.seed``/分区。
     """
     mounts = [
         (os.path.abspath(host_workdir), DOCKER_WORKSPACE_LOGICAL_ROOT, "rw"),
         (
-            _sandbox_skills_dir(host_workdir),
+            _sandbox_skills_dir(host_workdir, layout),
             DOCKER_WORKSPACE_SKILLS_PATH,
             "rw",
         ),
@@ -1100,29 +1525,34 @@ def _list_visible_entries(path: str) -> list[str]:
         return []
 
 
-def _sandbox_skill_manifest_path(host_workdir: str) -> str:
-    return os.path.join(_sandbox_skills_dir(host_workdir), SANDBOX_SKILL_MANIFEST_NAME)
+def _sandbox_skill_manifest_path(host_workdir: str, layout: str | None = None) -> str:
+    return os.path.join(
+        _sandbox_skills_dir(host_workdir, layout), SANDBOX_SKILL_MANIFEST_NAME
+    )
 
 
-def _write_sandbox_skill_manifest(host_workdir: str, entries: list[str]) -> None:
+def _write_sandbox_skill_manifest(
+    host_workdir: str, entries: list[str], layout: str | None = None
+) -> None:
     """记下上一版 ``.seed`` 里都有哪些条目。
 
     分区同步需要区分「这个目录是 seed 提供的技能」和「这个目录是 agent 自己用技能 API
     建的」——前者在技能被删/被禁用后必须清掉，后者绝不能碰。账本在作废 ``.seed`` 之前
     写入，所以即使 ``.seed`` 已被删除也仍然知道上一版装了哪些。
     """
-    path = _sandbox_skill_manifest_path(host_workdir)
+    path = _sandbox_skill_manifest_path(host_workdir, layout)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump({"entries": sorted(entries)}, handle, ensure_ascii=False)
+        _atomic_write_text(
+            path, json.dumps({"entries": sorted(entries)}, ensure_ascii=False)
+        )
     except OSError as exc:  # noqa: BLE001
         logger.debug("[workspace] Failed to write skill manifest %s: %s", path, exc)
 
 
-def _read_sandbox_skill_manifest(host_workdir: str) -> set[str]:
+def _read_sandbox_skill_manifest(host_workdir: str, layout: str | None = None) -> set[str]:
     """读取上一版 ``.seed`` 的条目名；缺失或损坏时返回空集合（退化为只认公共技能）。"""
-    path = _sandbox_skill_manifest_path(host_workdir)
+    path = _sandbox_skill_manifest_path(host_workdir, layout)
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
@@ -1136,18 +1566,50 @@ def _read_sandbox_skill_manifest(host_workdir: str) -> set[str]:
     return {str(item) for item in entries if str(item).strip()}
 
 
+def _atomic_write_text(path: str, content: str) -> None:
+    """同目录临时文件 + ``os.replace`` 的原子写。
+
+    治理状态文件（指纹/账本）都是「读一次判一次」的判据：并发读者（同一用户另一会话、
+    另一 worker）读到半截 JSON 会退化成"没有账本"，读到空指纹会误判成"已变更"而多一次
+    全量重建。Windows 上 ``os.replace`` 对已存在目标也可用，因此不需要额外分支。
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    handle_fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _dir_tree_fingerprint(root: str | None) -> str | None:
     """目录树的内容指纹；目录不存在时返回 ``None``。
 
     用「相对路径 + 大小 + mtime」而不是文件内容：技能包可能带几 MB 脚本与二进制资源，
     而容器初始化是热路径，不值得全量读一遍——任何内容改动都会改 mtime。
+
+    刻意跳过点开头条目与 ``__pycache__``（口径与 :func:`_list_visible_entries` 一致）：
+    编辑器临时文件与字节码缓存不是技能内容，把它们算进指纹会让"什么都没改"也触发一次
+    全量重建。
     """
     if not root or not os.path.isdir(root):
         return None
     digest = hashlib.sha256()
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if not name.startswith(".") and name != "__pycache__"
+        )
         for name in sorted(filenames):
+            if name.startswith("."):
+                continue
             full = os.path.join(dirpath, name)
             try:
                 stat = os.stat(full)
@@ -1167,57 +1629,71 @@ def _platform_public_skills_fingerprint() -> str | None:
     return _dir_tree_fingerprint(get_platform_skills_root())
 
 
-async def _sandbox_skills_seed_fingerprint(host_workdir: str) -> str | None:
-    """沙箱技能 seed 的完整指纹 = 公共技能库 + 该用户个人技能库 + 被禁公共技能集合。
+async def _sandbox_skills_seed_fingerprint(
+    host_workdir: str,
+    skill_paths: list[str] | None = None,
+    layout: str | None = None,
+) -> str | None:
+    """沙箱技能 seed 的完整指纹 = 技能集合令牌 + 公共技能库 + 个人技能库。
 
     **为什么不能只 hash 公共技能库**：``.seed`` 里装的是 ``skill_paths``（公共 + 个人）
-    减去禁用项，但原先的指纹只覆盖公共库的**文件内容**，于是下面两件事都不会让它失效：
+    减去禁用项，但原先的指纹只覆盖公共库的**文件内容**，于是下面三件事都不会让它失效：
 
     * **管理员禁用某个公共技能**——只改权限、不动技能文件，指纹不变；
-    * **个人技能被删除或改版**——个人技能库根本不在指纹里。
+    * **个人技能被删除或改版**——个人技能库根本不在指纹里；
+    * **智能体的技能白名单变了**——``skill_paths`` 变了而磁盘一个字节都没动。
 
     后果是 AgentScope 的 ``_setup_skills``（``.seed`` 非空即跳过）永不刷新，沙箱里
-    一直躺着平台已经认为「不存在/已禁用」的技能目录；而提示词恰好教模型去 ``.seed``
-    里 ``ls -a`` 找技能文件，于是出现「平台说没有、沙箱里能翻到甚至能执行」。
+    一直躺着平台已经认为「不存在/已禁用/不属于该智能体」的技能目录；而提示词恰好教
+    模型去 ``.seed`` 里 ``ls -a`` 找技能文件，于是出现「平台说没有、沙箱里能翻到甚至
+    能执行」。
 
-    禁用集合取不到时（无用户/智能体上下文、权限服务抖动）退化为「不含权限变更」的
-    指纹并告警——方向与 ``get_forbidden_skill_ids`` 自身一致：宁可少失效一次，
-    也不要因为读不到权限就让整个技能链路不可用。
+    **为什么禁用集合刻意不进指纹**：禁用（权限禁用 ``forbidden_skills`` 或管理端
+    ``enabled: false``）必然改变 :func:`discover_platform_skill_paths` 的输出——它同时
+    过滤这两种禁用——于是 ``skill_paths`` 变、令牌变，指纹里的 ``skills:<令牌>`` 一项
+    已经覆盖了权限变更。再单独塞一份禁用集合只会引入第二个真相来源：创建侧可能因为
+    「没有用户/智能体上下文」拿到空集（例如沙箱预热接口、权限服务抖动时的 fail-open），
+    核对侧拿到真集合，两边算出的指纹**永远不相等** → 每轮对话都逐出并重建容器
+    （实测 3 轮 3 台）。这类"两个来源各取一次"的漂移是本项目已经踩过的坑，因此这里
+    只保留**同一份** ``skill_paths`` 作为技能集合的唯一真相来源。
+
+    会话目录（``<workdir>/skills/.seed``）里"禁用之前"铺下的副本由
+    :func:`_prune_forbidden_session_skills` 按技能 id 直接清理，与指纹无关。
     """
-    public = _platform_public_skills_fingerprint()
+    # 目录树指纹是**同步 IO**（逐个文件 stat + 读内容做 hash）：技能库大时要几十毫秒，
+    # 而这条路径每轮对话都会走，直接算会把事件循环卡住。放线程里跑，不阻塞其他请求。
+    public = await asyncio.to_thread(_platform_public_skills_fingerprint)
     if public is None:
         return None
 
     digest = hashlib.sha256()
+    if layout is None and skill_paths is not None:
+        layout = _skill_paths_cache_token(skill_paths)
+    if layout:
+        # 技能集合进指纹：白名单增删一个技能不会改任何文件，只有它能触发失效。
+        digest.update(f"skills:{layout}\n".encode("utf-8"))
     digest.update(f"public:{public}\n".encode("utf-8"))
-    personal = _dir_tree_fingerprint(_personal_skills_dir(host_workdir))
+    personal = await asyncio.to_thread(
+        _dir_tree_fingerprint, _personal_skills_dir(host_workdir)
+    )
     digest.update(f"personal:{personal or '-'}\n".encode("utf-8"))
-
-    forbidden: set[str] = set()
-    try:
-        from app.services.ai.skills.policy import get_forbidden_skill_ids
-
-        forbidden = {str(item) for item in (await get_forbidden_skill_ids() or set())}
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "[workspace] 读取禁用技能集合失败，本次 seed 指纹不含权限变更: %s", exc
-        )
-    digest.update(("forbidden:" + ",".join(sorted(forbidden)) + "\n").encode("utf-8"))
     return digest.hexdigest()
 
 
-def _sandbox_skills_fingerprint_path(host_workdir: str) -> str:
-    return os.path.join(
-        host_workdir,
-        DOCKER_SANDBOX_DIR_NAME,
-        DOCKER_SANDBOX_SKILLS_FINGERPRINT_NAME,
-    )
+def _sandbox_skills_fingerprint_path(host_workdir: str, layout: str | None = None) -> str:
+    """指纹文件路径；带 layout 时按技能集合分文件（互不覆盖）。"""
+    name = DOCKER_SANDBOX_SKILLS_FINGERPRINT_NAME
+    if layout:
+        name = f"{name}-{layout}"
+    return os.path.join(host_workdir, DOCKER_SANDBOX_DIR_NAME, name)
 
 
-def _read_sandbox_skills_fingerprint(host_workdir: str) -> str | None:
+def _read_sandbox_skills_fingerprint(
+    host_workdir: str, layout: str | None = None
+) -> str | None:
     try:
         with open(
-            _sandbox_skills_fingerprint_path(host_workdir), "r", encoding="utf-8"
+            _sandbox_skills_fingerprint_path(host_workdir, layout), "r", encoding="utf-8"
         ) as handle:
             value = handle.read().strip()
     except OSError:
@@ -1225,91 +1701,86 @@ def _read_sandbox_skills_fingerprint(host_workdir: str) -> str | None:
     return value or None
 
 
-def _write_sandbox_skills_fingerprint(host_workdir: str, fingerprint: str) -> None:
-    path = _sandbox_skills_fingerprint_path(host_workdir)
+def _write_sandbox_skills_fingerprint(
+    host_workdir: str, fingerprint: str, layout: str | None = None
+) -> None:
+    path = _sandbox_skills_fingerprint_path(host_workdir, layout)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(fingerprint)
+        _atomic_write_text(path, fingerprint)
     except OSError as exc:  # noqa: BLE001
         logger.warning("[workspace] Failed to record skills fingerprint: %s", exc)
 
 
 def _public_skill_directory_names() -> set[str]:
-    """公共技能在 ``.seed`` / 分区里可能出现的目录名。
+    """公共技能在 ``.seed`` / 分区里可能出现的**目录名**（= 源目录 basename）。
 
-    AgentScope 用 SKILL.md frontmatter 的 ``name`` 作为技能目录名（可能是中文），
-    只按源目录 basename 匹配会漏掉，所以两者都收——用于把公共技能与 agent 自建
-    技能区分开，避免同步时误删后者。
+    刻意**不再**把 SKILL.md frontmatter 的 ``name`` 算进来。AgentScope 打包 seed 用的
+    是 ``arcname=os.path.basename(os.path.abspath(path))``（``_base.py`` 的
+    ``_setup_skills``），只有**通过 AgentScope 技能 API 新建**的技能才按 frontmatter
+    ``name`` 的 sanitize 结果命名——而后者正是本函数要保护、绝不能删的「agent 自建
+    技能」。把 frontmatter name 当公共技能名，会让「目录名恰好等于某个公共技能
+    frontmatter name 的自建技能」在公共技能被删/被禁时被当成残留清掉。
     """
     from app.utils.fs_access import get_platform_skills_root
-    from app.utils.skill_metadata import parse_skill_frontmatter
 
     root = get_platform_skills_root()
     if not root or not os.path.isdir(root):
         return set()
-    names: set[str] = set()
     try:
         entries = sorted(os.listdir(root))
     except OSError:
-        return names
-    for entry in entries:
-        if entry.startswith("."):
-            continue
-        skill_md = os.path.join(root, entry, "SKILL.md")
-        if not os.path.isfile(skill_md):
-            continue
-        names.add(entry)
-        try:
-            meta = parse_skill_frontmatter(entry, skill_md)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[workspace] Failed to parse %s: %s", skill_md, exc)
-            continue
-        name = str(meta.get("name") or "").strip()
-        if name:
-            names.add(name)
-    return names
+        return set()
+    return {
+        entry
+        for entry in entries
+        if not entry.startswith(".")
+        and os.path.isfile(os.path.join(root, entry, "SKILL.md"))
+    }
 
 
 def _invalidate_stale_sandbox_skill_seed(
-    host_workdir: str, fingerprint: str | None = None
+    host_workdir: str, fingerprint: str | None = None, layout: str | None = None
 ) -> tuple[bool, str | None]:
     """技能集合或权限变了就作废沙箱技能模板，返回 ``(是否已作废, 当前指纹)``。
 
     AgentScope 的 ``_setup_skills`` 只在 ``skills/.seed`` 为空时打包一次，之后「假定
-    上一次运行或用户才是真相来源」永不刷新：新加的技能、改过的脚本、以及被删除或被
-    禁用的技能都不会反映到沙箱里。这里在容器初始化**之前**比对指纹，不一致就删掉
-    ``.seed``——随后的 ``initialize()`` 会按当前 ``skill_paths`` 重新打包，顺带把被禁
-    技能挡在包外。
+    上一次运行或用户才是真相来源」永不刷新：新加的技能、改过的脚本、被删除或被禁用的
+    技能、以及智能体白名单的增删都不会反映到沙箱里。这里在容器初始化**之前**比对指纹，
+    不一致就删掉 ``.seed``——随后的 ``initialize()`` 会按当前 ``skill_paths`` 重新打包，
+    顺带把被禁技能挡在包外。
 
     ``fingerprint`` 由调用方用 :func:`_sandbox_skills_seed_fingerprint` 算好传入（它需要
     await 权限查询）；不传时退化为只看公共技能库内容指纹（老行为，供同步轻量调用与
     测试使用）。指纹不存在（老部署首次升级）同样视为不一致，让历史快照一次性对齐。
+    ``layout`` 是技能集合令牌：技能目录与指纹文件都按它分片，缺省即历史单份布局。
     """
     if fingerprint is None:
         fingerprint = _platform_public_skills_fingerprint()
     if fingerprint is None:
         return False, None
-    if _read_sandbox_skills_fingerprint(host_workdir) == fingerprint:
+    if _read_sandbox_skills_fingerprint(host_workdir, layout) == fingerprint:
         return False, fingerprint
 
     seed_dir = os.path.join(
-        _sandbox_skills_dir(host_workdir), SANDBOX_SKILL_SEED_DIR_NAME
+        _sandbox_skills_dir(host_workdir, layout), SANDBOX_SKILL_SEED_DIR_NAME
     )
     # 删之前记下这一版 seed 里都有什么：分区同步要靠它区分「seed 提供的技能」
     # 与「agent 自己用技能 API 建的技能」，只清前者，后者必须原样保留。
-    _write_sandbox_skill_manifest(host_workdir, _list_visible_entries(seed_dir))
+    _write_sandbox_skill_manifest(host_workdir, _list_visible_entries(seed_dir), layout)
     if os.path.isdir(seed_dir):
         shutil.rmtree(seed_dir, ignore_errors=True)
     logger.info(
         "[workspace] Sandbox skill seed invalidated for %s (skill set or permissions changed)",
-        host_workdir,
+        seed_dir,
     )
     return True, fingerprint
 
 
-def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
-    """把重建后的 ``.seed`` 同步进已装备的分区，返回处理的条目数。
+def _sync_public_skills_into_sandbox_partitions(
+    host_workdir: str, layout: str | None = None
+) -> tuple[int, list[str]]:
+    """把重建后的 ``.seed`` 同步进已装备的分区，返回 ``(处理条目数, 失败明细)``。
 
     AgentScope 的分区只在首次出现时从 seed 复制一次（``isdir(partition)`` 即退出），
     所以仅重建 seed 还不够：已有分区的 agent 仍会读到旧技能。这里逐个分区——删掉
@@ -1320,22 +1791,29 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
     的个人技能**永久留在老分区里（模型 ``ls`` 就能翻到）。因此判据改为「上一版 seed
     的账本」（:func:`_read_sandbox_skill_manifest`），并保留公共技能名单作为账本缺失
     时的兜底。分区里其它条目属于 agent 自建技能，一律保留。
+
+    **失败明细必须向上冒泡**：此前 copytree 失败只 warning 然后照常提交指纹，于是
+    「这一次没同步成功」被记成「已是最新」，该分区永久缺这个技能且不会重试。
     """
-    skills_dir = _sandbox_skills_dir(host_workdir)
+    skills_dir = _sandbox_skills_dir(host_workdir, layout)
     seed_dir = os.path.join(skills_dir, SANDBOX_SKILL_SEED_DIR_NAME)
     if not os.path.isdir(seed_dir):
-        return 0
+        return 0, []
     seed_names = set(_list_visible_entries(seed_dir))
-    previously_seeded = _read_sandbox_skill_manifest(host_workdir)
-    public_names = _public_skill_directory_names()
+    previously_seeded = _read_sandbox_skill_manifest(host_workdir, layout)
+    # 公共技能名单**只在账本缺失时**当兜底（本功能上线前就装备好的分区没有账本）。
+    # 账本存在时以账本为权威：否则「目录名恰好与某个公共技能同名的 agent 自建技能」
+    # 会被当平台残留删掉，而自建技能只存在于这一份里。
+    public_names = set() if previously_seeded else _public_skill_directory_names()
     if not seed_names and not public_names:
-        return 0
+        return 0, []
 
     synced = 0
+    failed: list[str] = []
     try:
         partitions = sorted(os.listdir(skills_dir))
     except OSError:
-        return 0
+        return 0, []
     for entry in partitions:
         if entry == SANDBOX_SKILL_SEED_DIR_NAME or entry.startswith("."):
             continue
@@ -1350,37 +1828,55 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
                 continue
             if name not in previously_seeded and name not in public_names:
                 continue
+            if name not in previously_seeded:
+                logger.info(
+                    "[workspace] 无账本兜底：按公共技能名单清掉分区残留 %s/%s",
+                    entry,
+                    name,
+                )
             stale = os.path.join(partition, name)
-            if os.path.isdir(stale):
-                shutil.rmtree(stale, ignore_errors=True)
-            else:
-                try:
+            try:
+                if os.path.isdir(stale) and not os.path.islink(stale):
+                    shutil.rmtree(stale)
+                else:
                     os.remove(stale)
-                except OSError:
+            except OSError as exc:  # noqa: BLE001
+                if os.path.exists(stale):
+                    # 删不掉也要冒泡：否则指纹会被提交，这个「平台已认为不存在」的
+                    # 技能就永久留在分区里，而提示词恰好教模型去分区里翻技能。
+                    logger.warning(
+                        "[workspace] Failed to drop stale skill %s: %s", stale, exc
+                    )
+                    failed.append(f"{entry}/{name}")
                     continue
             synced += 1
-        # 再从新 seed 覆盖全部条目（公共 + 个人）
+        # 再从新 seed 覆盖全部条目（公共 + 个人）。用 staging + os.replace 原子替换：
+        # 同用户另一个会话/容器可能正在同一个挂载目录里跑 Bash，先 rmtree 再 copytree
+        # 会让它读到「目录不存在」或半个技能。
         for name in sorted(seed_names):
             source = os.path.join(seed_dir, name)
             if not os.path.isdir(source):
                 continue
             target = os.path.join(partition, name)
-            if os.path.isdir(target):
-                shutil.rmtree(target, ignore_errors=True)
-            elif os.path.exists(target):
-                try:
-                    os.remove(target)
-                except OSError:
-                    continue
+            # 点开头命名：既不会被 _list_visible_entries 当成技能条目，也不会被
+            # AgentScope 的技能枚举看到（它只认 partition 下的可见条目）。
+            staged = os.path.join(partition, f".tmp-{uuid.uuid4().hex}")
             try:
-                shutil.copytree(source, target, copy_function=_hardlink_or_copy2)
+                shutil.copytree(source, staged, copy_function=_hardlink_or_copy2)
+                if os.path.isdir(target) and not os.path.islink(target):
+                    # 非空目录无法用 os.replace 直接替换（要求目标为空），先删再换；
+                    # 文件/符号链接走 os.replace 本身原子路径。
+                    shutil.rmtree(target)
+                os.replace(staged, target)
             except OSError as exc:  # noqa: BLE001
+                shutil.rmtree(staged, ignore_errors=True)
                 logger.warning(
                     "[workspace] Failed to sync skill %s into %s: %s",
                     name,
                     partition,
                     exc,
                 )
+                failed.append(f"{entry}/{name}")
                 continue
             synced += 1
     if synced:
@@ -1389,24 +1885,200 @@ def _sync_public_skills_into_sandbox_partitions(host_workdir: str) -> int:
             synced,
             skills_dir,
         )
-    return synced
+    if failed:
+        logger.warning(
+            "[workspace] 技能分区同步失败 %d 项（本次不提交指纹，下次启动重试）：%s",
+            len(failed),
+            ", ".join(failed[:10]),
+        )
+    return synced, failed
 
 
 def _commit_sandbox_skills_fingerprint(
-    host_workdir: str, fingerprint: str | None
+    host_workdir: str, fingerprint: str | None, layout: str | None = None
 ) -> None:
     """打包成功后才记录指纹，避免打包失败被当成「已是最新」而永久跳过刷新。"""
     if not fingerprint:
         return
     seed_dir = os.path.join(
-        _sandbox_skills_dir(host_workdir), SANDBOX_SKILL_SEED_DIR_NAME
+        _sandbox_skills_dir(host_workdir, layout), SANDBOX_SKILL_SEED_DIR_NAME
     )
     try:
         if not os.path.isdir(seed_dir) or not os.listdir(seed_dir):
             return
     except OSError:
         return
-    _write_sandbox_skills_fingerprint(host_workdir, fingerprint)
+    _write_sandbox_skills_fingerprint(host_workdir, fingerprint, layout)
+
+
+def _parse_sandbox_cache_key(cache_key: str) -> tuple[str, str, str, str] | None:
+    """拆解 ``<root>::<user_key>::<skills_token>::<policy>``；格式不符返回 ``None``。
+
+    ``user_key`` 由 ``_clean_key_part`` 归一化（不含 ``:``），技能集合令牌是纯十六进制
+    或 ``noskills``，所以从右侧切三段是安全的。
+    """
+    parts = str(cache_key or "").rsplit("::", 3)
+    if len(parts) != 4:
+        return None
+    root, user_key, layout, policy = parts
+    if not root or not user_key or not policy:
+        return None
+    return root, user_key, layout, policy
+
+
+async def _sandbox_skills_snapshot_is_current(
+    cache_key: str,
+    *,
+    skill_paths: list[str] | None,
+) -> bool:
+    """该沙箱里的技能快照是否仍与当前技能集合 / 权限一致。
+
+    「容器还活着」≠「容器里的技能集合是对的」：缓存键只由工作区 + 白名单 + 策略决定，
+    管理员禁用/下架技能、公共技能内容改动、个人技能删除都不会改缓存键，于是缓存命中会
+    把**老快照**直接交给本次会话——沙箱里依然能 ``ls`` 到、能执行那些技能，直到空闲
+    回收（默认 15 分钟）为止。这个函数就是那个核对点，覆盖两种过期：
+
+    ① 技能集合令牌变了（白名单或禁用集合变化 → 挂载目录/容器名都该换）；
+    ② 令牌没变但公共库/个人库内容变了。
+
+    禁用（权限禁用 / 管理端 ``enabled: false``）走的是 ①：两者都会改变
+    :func:`discover_platform_skill_paths` 的输出，于是令牌必变——因此这里**不需要**再传
+    一份禁用集合，也就不会出现"建沙箱用一份、比指纹用另一份"的漂移（见
+    :func:`_sandbox_skills_seed_fingerprint` 的说明）。
+
+    任何一项**无法判定**（指纹文件缺失、公共技能库读不到）都判为「最新」——宁可少失效
+    一次，也不能因为判定不了就每轮重建容器。
+    """
+    parsed = _parse_sandbox_cache_key(cache_key)
+    if parsed is None:
+        return True
+    root, user_key, layout, policy = parsed
+    if skill_paths is not None and _skill_paths_cache_token(skill_paths) != layout:
+        return False
+    # 与创建侧同口径解析路径：DooD 下必须是宿主路径，否则指纹恒读不到（判「最新」）
+    host_workdir = _sandbox_skills_host_workdir(root, user_key, policy)
+    recorded = _read_sandbox_skills_fingerprint(host_workdir, layout or None)
+    if not recorded:
+        return True
+    current = await _sandbox_skills_seed_fingerprint(
+        host_workdir,
+        skill_paths,
+        layout or None,
+    )
+    if not current:
+        return True
+    return current == recorded
+
+
+async def _evict_sandbox_cache_entry(cache_key: str, *, reason: str) -> int:
+    """按缓存键里的策略后缀逐出一台沙箱（Docker / K8s 各自的逐出实现）。"""
+    if str(cache_key).endswith(f"::{SANDBOX_POLICY_K8S}"):
+        return await _evict_k8s_workspace_cache_entry(cache_key, reason=reason)
+    return await _evict_docker_workspace_cache_entry(cache_key, reason=reason)
+
+
+#: 技能集合目录被回收的最小"年龄"（秒）：刚建好就被回收的目录留着，避免
+#: 「切换智能体 → 立即重建 → 再被回收」的抖动把目录反复删了又建。
+SANDBOX_SKILLS_DIR_MIN_AGE_SECONDS = 600.0
+
+
+def _sandbox_skills_dir_is_disposable(host_workdir: str, layout: str) -> bool:
+    """该技能集合目录里是否**只有平台可再生**的内容（没有 agent 自建技能）。
+
+    分区（``skills-<layout>/<agent_id>/``）里既可能有平台铺的技能，也可能有 agent 用
+    技能 API 自建的技能——后者只存在于这个目录里，删了就真丢了。判据刻意只认
+    「当前 seed ∪ 上一版账本」这两个**平台自己的记录**：任何不在里面的条目都当作自建
+    技能，整目录保留（刻意的保守，宁可漏收也不丢数据）。
+
+    为什么不再把「公共技能目录名」算进判据：目录名相同不等于同源。agent 完全可以在自己
+    的分区里建一个与某个公共技能**同名**的技能（公共技能不在它白名单里时尤其容易发生），
+    按名字判就会把它当平台残留，连同整个技能集合目录一起 ``rmtree``——那是不可再生的
+    用户数据（已用探针复现）。账本缺失的老分区可能因此少收一次残留，但这换来的是
+    「绝不误删自建技能」，方向与 :func:`_sync_public_skills_into_sandbox_partitions`
+    的兜底一致。
+    """
+    skills_dir = _sandbox_skills_dir(host_workdir, layout)
+    if not os.path.isdir(skills_dir):
+        return False
+    seed_dir = os.path.join(skills_dir, SANDBOX_SKILL_SEED_DIR_NAME)
+    managed = set(_list_visible_entries(seed_dir))
+    managed |= _read_sandbox_skill_manifest(host_workdir, layout)
+    for entry in _list_visible_entries(skills_dir):
+        if entry == SANDBOX_SKILL_SEED_DIR_NAME:
+            continue
+        partition = os.path.join(skills_dir, entry)
+        if not os.path.isdir(partition) or os.path.islink(partition):
+            return False
+        for name in _list_visible_entries(partition):
+            if name not in managed:
+                return False
+    return True
+
+
+def collect_orphan_sandbox_skills_dir(cache_key: str) -> str | None:
+    """回收一台已逐出沙箱的技能集合目录（磁盘），返回被删目录或 ``None``。
+
+    ``sandbox/skills-<令牌>`` 是按技能集合分片的物化目录：白名单每变一次就多一份，
+    容器被回收后目录却会一直留着（不回收是有原因的——同用户另一台容器可能正挂着它）。
+    因此在**逐出这台沙箱之后**、且满足下面全部条件时才删：
+
+    1. 该用户 + 该令牌没有任何活跃缓存条目（进程内别的会话没在用同一集合）；
+    2. 目录年龄超过 :data:`SANDBOX_SKILLS_DIR_MIN_AGE_SECONDS`；
+    3. 目录里没有 agent 自建技能（见 :func:`_sandbox_skills_dir_is_disposable`）。
+
+    历史单份布局 ``sandbox/skills`` 不在此列（可能装的是旧版本自建技能，见
+    :func:`_migrate_legacy_sandbox_skills_dir`）。任何异常都只告警不抛出——回收是
+    尽力而为的清理，绝不能影响沙箱逐出本身。
+    """
+    parsed = _parse_sandbox_cache_key(cache_key)
+    if parsed is None:
+        return None
+    root, user_key, layout, policy = parsed
+    if not layout:
+        return None
+    prefix = f"{os.path.abspath(root)}::{user_key}::"
+    marker = f"::{layout}::"
+    for key in list(_docker_workspace_cache) + list(_k8s_workspace_cache):
+        if isinstance(key, str) and key.startswith(prefix) and marker in key:
+            return None
+    # 与创建侧同口径：DooD 下技能目录在宿主路径上，用容器路径会回收错的树
+    host_workdir = _sandbox_skills_host_workdir(root, user_key, policy)
+    skills_dir = _sandbox_skills_dir(host_workdir, layout)
+    if not os.path.isdir(skills_dir):
+        return None
+    try:
+        age = time.time() - os.path.getmtime(skills_dir)
+    except OSError:
+        return None
+    if age < SANDBOX_SKILLS_DIR_MIN_AGE_SECONDS:
+        return None
+    try:
+        if not _sandbox_skills_dir_is_disposable(host_workdir, layout):
+            return None
+    except OSError as exc:  # noqa: BLE001
+        logger.debug("[workspace] skills dir inspect failed for %s: %s", skills_dir, exc)
+        return None
+    # 「先改名再删」：多个副本（或同一进程的多个会话）可能同时判定这份目录是孤儿，
+    # 直接 rmtree 会互相踩到半删状态；改名是原子操作，抢不到的那个直接放弃，
+    # 抢到的那个再从容删掉自己独占的目录。
+    claim = f"{skills_dir}.gc-{uuid.uuid4().hex}"
+    try:
+        os.replace(skills_dir, claim)
+    except OSError as exc:  # noqa: BLE001
+        logger.debug("[workspace] skills dir claim skipped for %s: %s", skills_dir, exc)
+        return None
+    try:
+        shutil.rmtree(claim)
+    except OSError as exc:  # noqa: BLE001
+        logger.warning("[workspace] Failed to reclaim skills dir %s: %s", claim, exc)
+        return None
+    # 指纹旁文件单独存放（在 ``sandbox/`` 下），一并清掉；账本在目录里已随目录删除
+    try:
+        os.remove(_sandbox_skills_fingerprint_path(host_workdir, layout))
+    except OSError:
+        pass
+    logger.info("[workspace] Reclaimed orphan sandbox skills dir: %s", skills_dir)
+    return skills_dir
 
 
 def _resolve_docker_host_data_path(service_path: str) -> str:
@@ -1485,26 +2157,35 @@ async def _policy_docker_workspace(
     public_docs_source: str | None = None
     seed_invalidated = False
     skills_fingerprint: str | None = None
+    #: 技能集合令牌 = 这一台沙箱的身份（目录 / 指纹 / 容器名同源）。缺省即单份历史布局。
+    layout = _skill_paths_cache_token(skill_paths)
     if host_workdir:
-        os.makedirs(_sandbox_skills_dir(host_workdir), exist_ok=True)
-        # 个人技能源目录也要存在：它以只读 bind mount 挂进沙箱（/workspace/personal-skills），
-        # 源目录缺失时 Docker 会直接创建空目录（root 属主），反而更难排查。
-        os.makedirs(_personal_skills_dir(host_workdir), exist_ok=True)
-        os.makedirs(
-            os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
-            exist_ok=True,
-        )
+        # 用户级准备锁：同一用户的多个技能集合会并发写同一份宿主目录（个人技能源、
+        # 公共文档目录、历史布局的一次性迁移），这一段必须串行。
+        async with _sandbox_host_prepare_lock(host_workdir):
+            _migrate_legacy_sandbox_skills_dir(host_workdir, layout)
+            os.makedirs(_sandbox_skills_dir(host_workdir, layout), exist_ok=True)
+            # 个人技能源目录也要存在：它以只读 bind mount 挂进沙箱（/workspace/personal-skills），
+            # 源目录缺失时 Docker 会直接创建空目录（root 属主），反而更难排查。
+            os.makedirs(_personal_skills_dir(host_workdir), exist_ok=True)
+            os.makedirs(
+                os.path.join(host_workdir, DOCKER_PUBLIC_DIR_NAME, "docs"),
+                exist_ok=True,
+            )
         # 技能集合或权限变了就作废上一次的 seed 模板，让 initialize() 重新打包
         # （AgentScope 自己不刷新，见 _invalidate_stale_sandbox_skill_seed）。
-        # 指纹必须含个人技能库与禁用集合：只 hash 公共库文件的话，「禁用某技能」
-        # 与「个人技能被删」都不会触发失效，沙箱里会留下平台认为不存在的技能。
+        # 指纹含技能集合令牌、个人技能库与公共库：禁用（权限禁用 / enabled=false）
+        # 会改 discover_platform_skill_paths 的输出 → 令牌变 → 这里必失效。
         seed_invalidated, skills_fingerprint = _invalidate_stale_sandbox_skill_seed(
-            host_workdir, await _sandbox_skills_seed_fingerprint(host_workdir)
+            host_workdir,
+            await _sandbox_skills_seed_fingerprint(host_workdir, skill_paths, layout),
+            layout,
         )
         public_docs_source = _resolve_docker_public_docs_source()
         extra_bind_mounts = _build_docker_workspace_mounts(
             host_workdir,
             public_docs_source,
+            layout,
         )[1:]
 
     default_mcp = build_container_tool_mcp()
@@ -1548,9 +2229,15 @@ async def _policy_docker_workspace(
         # 公共技能同步进（首次装备时就冻结的）既有分区，再记录指纹。顺序不能颠倒：
         # 指纹要在 seed 真的非空之后才写，否则打包失败会被当成「已是最新」永久跳过。
         if host_workdir:
+            sync_failed: list[str] = []
             if seed_invalidated:
-                _sync_public_skills_into_sandbox_partitions(host_workdir)
-            _commit_sandbox_skills_fingerprint(host_workdir, skills_fingerprint)
+                _, sync_failed = _sync_public_skills_into_sandbox_partitions(
+                    host_workdir, layout
+                )
+            if not sync_failed:
+                _commit_sandbox_skills_fingerprint(
+                    host_workdir, skills_fingerprint, layout
+                )
         workspace._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
         workspace._platform_execution_backend = SANDBOX_POLICY_DOCKER
         workspace._platform_sandbox_public_docs_mounted = public_docs_source is not None
@@ -1584,41 +2271,333 @@ async def _close_workspace_safely(workspace: Any, *, reason: str) -> None:
 
 
 def _skill_paths_cache_token(skill_paths: list[str] | None) -> str:
-    """技能集合的稳定令牌，用于把「同一用户 + 不同技能集合」的沙箱分开缓存。
+    """技能集合的稳定令牌：`「同一用户 + 不同技能集合」的沙箱身份`。
 
-    沙箱是**按用户**复用的（``_resolve_sandbox_user_key`` 只看用户身份、不看智能体），
-    而 ``skill_paths`` 每次都由当前智能体决定。缓存键若不含它就会出现双向错位：换了
-    智能体仍然命中上一个智能体的沙箱——既**看不到自己白名单里的技能**（``.seed`` 里
-    没有），又**看得到不属于自己的技能**；更糟的是缓存命中时连
-    ``_policy_*_workspace`` 都不会执行，连指纹治理都被一并跳过。
+    沙箱的**物理身份**（容器名 / Pod 名 / 挂载的技能目录）与缓存条目必须是 1:1：
+    缓存键含令牌而容器名只按用户唯一时，同一用户的第二个技能集合会在
+    ``create_or_replace`` 里把第一个集合**正在用的容器 stop+delete+create**，而第一个
+    条目仍留在缓存里、``is_alive`` 仍为 True（它只是个布尔属性，不反映容器真实状态），
+    于是那个智能体后续所有 Bash 都打在已删除的容器上。反过来说，物理身份若只按用户
+    唯一，两个集合还会共用同一份 ``.seed``，出现「看不到自己白名单里的技能、却看得到
+    别人的」以及禁用治理互相失效。
 
-    取目录名而不是完整路径：workspace 根对同一用户是固定的，参与哈希只会让键更长；
-    真正的语义差别在于「装了哪些技能」。用 sha256 截断避免键过长。
+    因此令牌同时被用于：缓存键、容器/Pod 名、技能目录名、指纹。它必须区分
+    **来源**（同名技能可能同时存在于公共库与个人库，内容不同），所以哈希里带
+    ``abspath`` 而不是只取 basename；workspace 根对同一用户固定，不会因此抖动。
     """
-    names = sorted(
+    entries = sorted(
         {
-            os.path.basename(os.path.abspath(path))
+            f"{os.path.basename(os.path.abspath(path))}|{os.path.abspath(path)}"
             for path in (skill_paths or [])
             if str(path).strip()
         }
     )
-    if not names:
+    if not entries:
         return "noskills"
-    return hashlib.sha256(",".join(names).encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:12]
 
 
-def _find_cached_k8s_workspace(root: str, user_key: str) -> Any:
-    """取该用户在给定 root 下的任意一个活跃 K8s 沙箱缓存条目。
+def _docker_workspace_cache_key(
+    root: str, user_key: str, skill_paths: list[str] | None
+) -> str:
+    """Docker 沙箱缓存键（含技能集合令牌）。
 
-    缓存键是 ``<root>::<user_key>::<技能集合令牌>::k8s``，而只读的状态/身份查询接口
-    没有技能上下文，只能按前缀匹配——同一用户存在多个不同技能集合的沙箱时，返回其中
-    一个即可满足「该用户的沙箱」这一语义。
+    获取与查询（``is_already_alive`` / 逐出 / 状态）必须用同一个函数算键：任何一处
+    手写键格式都会退化成"永远未命中"，表现为沙箱状态查询失灵或 lazy 代理重复创建。
+    """
+    return (
+        f"{os.path.abspath(root)}::{user_key}::"
+        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_DOCKER}"
+    )
+
+
+def _k8s_workspace_cache_key(
+    root: str, user_key: str, skill_paths: list[str] | None
+) -> str:
+    """K8s 沙箱缓存键（含技能集合令牌），语义同 Docker 版。"""
+    return (
+        f"{os.path.abspath(root)}::{user_key}::"
+        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_K8S}"
+    )
+
+
+def _sandbox_workspace_id(user_key: str, skill_paths: list[str] | None) -> str:
+    """沙箱的物理标识 = 用户 + 技能集合令牌（容器名 / Pod 名 / 挂载目录共用）。
+
+    AgentScope 用 ``workspace_id`` 推导容器名（``as_ws_<id>``）与 Pod 名
+    （``as-ws-<sanitize(id)>``），所以把令牌放进这里，物理沙箱才与缓存条目一一对应。
+
+    **先压缩用户键再拼令牌**：K8s 的 ``_k8s_safe_name`` 只保留前 63 字符（合法化是
+    1:1 字符替换，不会变长），若用户名很长，令牌会被一起截掉——同一用户的多个技能集合
+    就撞成同一个 Pod 名（第二个 Pod 直接 AlreadyExists）。预留 ``as-ws-`` 前缀与
+    分隔符的长度后压缩用户键，令牌就一定能存活；完整身份另有容器/Pod 标签
+    （``agentscope.workspace.id``）承载。
+    """
+    token = _skill_paths_cache_token(skill_paths)
+    return f"{_sandbox_user_key_prefix(user_key, len(token))}-{token}"
+
+
+def _sandbox_user_key_prefix(user_key: str, token_len: int) -> str:
+    """把用户键压到「拼上令牌后仍不超过 63 字符」，超长部分用哈希尾缀保唯一。
+
+    不做简单截断：两个前缀相同的长用户键（例如 SSO 长邮箱）被截成同一前缀后，拼上
+    相同令牌就是同一个容器/Pod 名——Docker 侧表现为互相 ``stop+delete``，K8s 侧表现为
+    Pod ``AlreadyExists``。这里用 ``sha256(user_key)`` 的前 8 位替换被裁掉的部分，
+    32 位熵加上必须共享的前缀，实际不可能相撞。
+    """
+    budget = max(1, 63 - len("as-ws-") - token_len - 1)
+    if len(user_key) <= budget:
+        return user_key
+    digest = hashlib.sha256(user_key.encode("utf-8")).hexdigest()[:8]
+    keep = max(1, budget - len(digest) - 1)
+    return f"{user_key[:keep]}-{digest}"
+
+
+def _conversation_workdir(root: str, user_key: str, conversation_id: str) -> str:
+    """会话工作区绝对路径（与 :func:`resolve_session_workdir` 同一套拼法）。
+
+    单独抽出来是因为只读入口（状态/终端）手里只有已解析好的 ``user_key``，
+    不该再要求调用方把 user_id/user_name/user_info 传一遍。
+    """
+    return os.path.join(
+        os.path.abspath(root),
+        user_key,
+        USER_SESSIONS_DIR_NAME,
+        _clean_key_part(conversation_id, "conversation"),
+    )
+
+
+def _conversation_sandbox_workspace_id(
+    *,
+    root: str | None,
+    user_key: str,
+    conversation_id: str | None,
+    policy: str,
+) -> str | None:
+    """该会话**当前挂着**的沙箱 ``workspace_id``（精确到技能集合），取不到返回 None。
+
+    同一用户可能同时有多台沙箱（每个技能集合一台）。只读入口（终端/状态）如果没有
+    技能上下文，只能"取某一台"，用户点终端就可能进到**另一个**智能体的沙箱。会话的
+    工作区登记（``_workspace_sandbox_refs``）里存着「会话+技能集合+策略 → 沙箱缓存键」，
+    据此可以算回该会话真正在用的那一台。
+    """
+    if not root or not str(conversation_id or "").strip():
+        return None
+    workdir = _conversation_workdir(root, user_key, str(conversation_id).strip())
+    workspace_prefix = f"{workdir}::"
+    policy_suffix = f"::{policy}"
+    cache = (
+        _docker_workspace_cache
+        if policy == SANDBOX_POLICY_DOCKER
+        else _k8s_workspace_cache
+    )
+    for workspace_cache_key, sandbox_cache_key in list(_workspace_sandbox_refs.items()):
+        if not isinstance(workspace_cache_key, str) or not isinstance(sandbox_cache_key, str):
+            continue
+        if not workspace_cache_key.startswith(workspace_prefix):
+            continue
+        if not sandbox_cache_key.endswith(policy_suffix):
+            continue
+        workspace = cache.get(sandbox_cache_key)
+        if workspace is None:
+            continue
+        workspace_id = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if workspace_id:
+            return str(workspace_id)
+    return None
+
+
+def _find_cached_docker_workspace(
+    root: str, user_key: str, *, conversation_id: str | None = None
+) -> Any:
+    """取该用户在给定 root 下的活跃 Docker 沙箱缓存条目。
+
+    给了 ``conversation_id`` 就优先返回**该会话正在用的那一台**（精确到技能集合）；
+    同一用户存在多个技能集合的沙箱时，没有会话上下文才退化为「返回其中一个」。
     """
     prefix = f"{os.path.abspath(root)}::{user_key}::"
-    for key, workspace in _k8s_workspace_cache.items():
-        if key.startswith(prefix):
+    workspace_id = _conversation_sandbox_workspace_id(
+        root=root,
+        user_key=user_key,
+        conversation_id=conversation_id,
+        policy=SANDBOX_POLICY_DOCKER,
+    )
+    for key, workspace in _docker_workspace_cache.items():
+        if not key.startswith(prefix):
+            continue
+        if workspace_id is None:
             return workspace
-    return None
+        cached_id = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if str(cached_id or "") == workspace_id:
+            return workspace
+    if workspace_id is None:
+        return None
+    # 会话登记里有但缓存对象已不在：退回"任意一台"，保持入口可用性（状态/终端只是
+    # 只读观测，宁可给一台该用户的沙箱，也不要报"沙箱不存在"）。
+    return _find_cached_docker_workspace(root, user_key)
+
+
+def _find_cached_k8s_workspace(
+    root: str, user_key: str, *, conversation_id: str | None = None
+) -> Any:
+    """取该用户在给定 root 下的活跃 K8s 沙箱缓存条目（语义同 Docker 版）。"""
+    prefix = f"{os.path.abspath(root)}::{user_key}::"
+    workspace_id = _conversation_sandbox_workspace_id(
+        root=root,
+        user_key=user_key,
+        conversation_id=conversation_id,
+        policy=SANDBOX_POLICY_K8S,
+    )
+    for key, workspace in _k8s_workspace_cache.items():
+        if not key.startswith(prefix):
+            continue
+        if workspace_id is None:
+            return workspace
+        cached_id = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if str(cached_id or "") == workspace_id:
+            return workspace
+    if workspace_id is None:
+        return None
+    return _find_cached_k8s_workspace(root, user_key)
+
+
+def _docker_container_name(workspace_id: str) -> str:
+    """与 AgentScope ``DockerWorkspace`` 一致的容器名（``as_ws_<workspace_id>``）。"""
+    return f"as_ws_{workspace_id}"
+
+
+def _sandbox_workspace_id_pattern(user_key: str) -> str:
+    """匹配某用户所有可能的 workspace_id：历史 ``<user_key>`` 或 ``<用户键前缀>-<令牌>``。
+
+    令牌只有两种长度（``noskills`` 8 位 / 12 位十六进制），所以这个模式既不会误配
+    ``a`` 与 ``a-b`` 这种前缀重合的用户，也能覆盖带令牌的新命名。用户键过长时
+    :func:`_sandbox_user_key_prefix` 会压缩它（保住令牌 + 哈希尾缀），因此这里把两种
+    令牌长度对应的前缀形态都列进候选；用户键不长时前缀就是它自身。
+    """
+    tokens = r"(?:noskills|[0-9a-f]{12})"
+    variants = {re.escape(user_key)}
+    for token_len in {12, len("noskills")}:
+        prefix = _sandbox_user_key_prefix(user_key, token_len)
+        variants.add(rf"{re.escape(prefix)}-{tokens}")
+    return rf"(?:{'|'.join(sorted(variants))})"
+
+
+async def _docker_sandbox_container_names(
+    client: Any,
+    *,
+    user_key: str,
+    root: str | None = None,
+    conversation_id: str | None = None,
+) -> list[str]:
+    """该用户当前所有沙箱容器的名字（每技能集合一台，可能是多台）。
+
+    只读入口（状态/终端/停止/重启）没有技能集合上下文，容器名又带令牌，所以不能
+    再拼 ``as_ws_<user_key>``。这里按 AgentScope 的容器标签
+    （``agentscope.workspace.id`` + ``agentscope.workspace=true``）反查，顺序为：
+    会话登记里确认在用的那一台 → 进程内缓存已知的 → 标签扫描命中的（按创建时间倒序）
+    → 历史无令牌命名（老部署兜底）。
+    """
+    names: list[str] = []
+    if root and conversation_id:
+        exact_id = _conversation_sandbox_workspace_id(
+            root=root,
+            user_key=user_key,
+            conversation_id=conversation_id,
+            policy=SANDBOX_POLICY_DOCKER,
+        )
+        if exact_id:
+            names.append(_docker_container_name(exact_id))
+
+    workspace = (
+        _find_cached_docker_workspace(root, user_key, conversation_id=conversation_id)
+        if root
+        else None
+    )
+    if workspace is not None:
+        wid = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if wid:
+            names.append(_docker_container_name(str(wid)))
+
+    pattern = _sandbox_workspace_id_pattern(user_key)
+    try:
+        listed = await client.containers.list(
+            all=True, filters={"label": "agentscope.workspace=true"}
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] Docker label scan for %s failed: %s", user_key, exc)
+        listed = []
+    # 标签扫描命中的容器按创建时间倒序：技能集合变了之后，**最新**的那台才是当前技能
+    # 集合对应的沙箱；没有 Created 字段（老 API/测试替身）时保持列表原序。
+    scanned: list[tuple[float, int, str]] = []
+    for index, item in enumerate(listed or []):
+        raw = getattr(item, "_container", None)
+        labels = raw.get("Labels") if isinstance(raw, dict) else None
+        labels = labels if isinstance(labels, dict) else {}
+        wid = str(labels.get("agentscope.workspace.id") or "")
+        if not wid or not re.fullmatch(pattern, wid):
+            continue
+        name = ""
+        raw_names = raw.get("Names") if isinstance(raw, dict) else None
+        if isinstance(raw_names, list) and raw_names:
+            name = str(raw_names[0]).lstrip("/")
+        if not name:
+            name = str(getattr(item, "id", "") or "")
+        if not name or name in names:
+            continue
+        try:
+            created = float(raw.get("Created") or 0) if isinstance(raw, dict) else 0.0
+        except (TypeError, ValueError):
+            created = 0.0
+        scanned.append((-created, index, name))
+    for _neg_created, _index, name in sorted(scanned):
+        if name not in names:
+            names.append(name)
+
+    legacy = _docker_container_name(user_key)
+    if legacy not in names:
+        names.append(legacy)
+    return names
+
+
+async def _docker_first_existing_container(
+    client: Any,
+    *,
+    user_key: str,
+    root: str | None = None,
+    conversation_id: str | None = None,
+) -> tuple[Any, str]:
+    """返回该用户第一个存在的容器对象与名字；都不存在时返回 ``(None, 首选名)``。"""
+    names = await _docker_sandbox_container_names(
+        client, user_key=user_key, root=root, conversation_id=conversation_id
+    )
+    for name in names:
+        try:
+            return await client.containers.get(name), name
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "status", None) == 404:
+                continue
+            raise
+    return None, names[0] if names else _docker_container_name(user_key)
+
+
+def _k8s_pod_name(workspace_id: str) -> str:
+    """与 AgentScope ``K8sWorkspace`` 一致的 Pod 名。
+
+    复刻 ``agentscope.workspace._k8s._constants._k8s_safe_name``：小写化 + 非
+    ``[a-z0-9-]`` 归一为 ``-`` + 截断 63 + 去尾部 ``-``。此前平台自己写成
+    ``f"as-ws-{user_key.replace('_','-')}"``，用户名含大写（``Alice``）时平台算出的
+    Pod 名与真实 Pod 名不一致，状态查询与终端会报「找不到 Pod」。
+    """
+    safe = re.sub(r"[^a-z0-9-]", "-", str(workspace_id or "").lower())
+    return f"as-ws-{safe}"[:63].rstrip("-")
 
 
 def _resolve_sandbox_user_key(
@@ -1647,18 +2626,21 @@ async def _acquire_docker_workspace(
     user_key: str,
     skill_paths: list[str] | None,
 ) -> tuple[Any, str]:
-    """Acquire one process-local Docker workspace reference per user."""
-    cache_key = (
-        f"{os.path.abspath(root)}::{user_key}::"
-        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_DOCKER}"
-    )
+    """Acquire one process-local Docker workspace reference per (user, skill set).
+
+    缓存条目与**物理沙箱**（容器名 + 挂载的技能目录）一一对应：两条不同技能集合的
+    条目各自拥有自己的容器与目录。此前只把令牌放进缓存键、容器名仍按用户唯一，
+    于是第二条条目会在 ``create_or_replace`` 里把第一条正在用的容器删掉重建，而第一条
+    仍被当作可用（``is_alive`` 只是布尔属性），后续 Bash 全部打在已删除的容器上。
+    """
+    cache_key = _docker_workspace_cache_key(root, user_key, skill_paths)
     lock = _docker_workspace_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         workspace = _docker_workspace_cache.get(cache_key)
         if workspace is None or getattr(workspace, "is_alive", True) is False:
             workspace = await _policy_docker_workspace(
                 skill_paths,
-                workspace_id=user_key,
+                workspace_id=_sandbox_workspace_id(user_key, skill_paths),
                 sandbox_user_key=user_key,
                 workspace_root=root,
             )
@@ -1736,6 +2718,12 @@ async def _evict_docker_workspace_cache_entry(
             continue
         closed_ids.add(id(workspace))
         await _close_workspace_safely(workspace, reason=reason)
+    # 容器已经关掉，这个技能集合的物化目录如果没有任何活跃条目、也不含 agent 自建技能，
+    # 就可以回收（否则白名单每变一次都会在磁盘上多留一份，只增不减）。
+    try:
+        collect_orphan_sandbox_skills_dir(cache_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] orphan skills dir reclaim skipped: %s", exc)
     return 1 if sandbox_ws is not None else 0
 
 
@@ -1745,18 +2733,19 @@ async def _acquire_k8s_workspace(
     user_key: str,
     skill_paths: list[str] | None,
 ) -> tuple[Any, str]:
-    """Acquire one process-local K8s workspace reference per user."""
-    cache_key = (
-        f"{os.path.abspath(root)}::{user_key}::"
-        f"{_skill_paths_cache_token(skill_paths)}::{SANDBOX_POLICY_K8S}"
-    )
+    """Acquire one process-local K8s workspace reference per (user, skill set).
+
+    与 Docker 侧同一约定：Pod 名与 subPath 技能目录都带技能集合令牌，物理沙箱与缓存
+    条目一一对应（否则第二个集合会 ``_ensure_pod`` 掉第一个集合正在用的 Pod）。
+    """
+    cache_key = _k8s_workspace_cache_key(root, user_key, skill_paths)
     lock = _k8s_workspace_locks.setdefault(cache_key, asyncio.Lock())
     async with lock:
         workspace = _k8s_workspace_cache.get(cache_key)
         if workspace is None or getattr(workspace, "is_alive", True) is False:
             workspace = await _policy_k8s_workspace(
                 skill_paths,
-                workspace_id=user_key,
+                workspace_id=_sandbox_workspace_id(user_key, skill_paths),
                 sandbox_user_key=user_key,
                 workspace_root=root,
             )
@@ -1834,6 +2823,10 @@ async def _evict_k8s_workspace_cache_entry(
             continue
         closed_ids.add(id(workspace))
         await _close_workspace_safely(workspace, reason=reason)
+    try:
+        collect_orphan_sandbox_skills_dir(cache_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] orphan skills dir reclaim skipped: %s", exc)
     return 1 if sandbox_ws is not None else 0
 
 
@@ -1866,6 +2859,7 @@ async def reap_idle_k8s_workspaces(
             reason="K8s workspace idle timeout",
             expected_last_used=last_used,
         )
+    _prune_idle_workspace_locks()
     return reaped
 
 
@@ -1893,6 +2887,171 @@ def _touch_sandbox_workspace(cache_key: str) -> None:
     """Polymorphic touch for any sandbox reference (Docker or K8s)."""
     _touch_docker_workspace(cache_key)
     _touch_k8s_workspace(cache_key)
+
+
+#: 执行期心跳的最小间隔（秒）。真正的心跳间隔取 ``max(它, idle/3)``：既保证远小于
+#: 空闲阈值，又不会把 ``sandbox_idle_time`` 调得很小时变成高频写字典。
+SANDBOX_ACTIVITY_HEARTBEAT_MIN_SECONDS = 5.0
+
+
+def _touch_sandbox_workspaces_for_user(
+    sandbox_user_key: str,
+    *,
+    policy: str | None = None,
+) -> int:
+    """刷新该用户名下所有活跃缓存条目的活跃时间，返回命中的条目数。
+
+    只读入口（终端）手里没有技能集合上下文，因此按 ``::<user_key>::`` 精确匹配
+    （两侧都是分隔符，前缀重合的其它用户不会被吃掉），可选再按策略后缀过滤。
+    """
+    touched = 0
+    needle = f"::{sandbox_user_key}::"
+    for cache, touch in (
+        (_docker_workspace_cache, _touch_docker_workspace),
+        (_k8s_workspace_cache, _touch_k8s_workspace),
+    ):
+        for cache_key in list(cache.keys()):
+            if not isinstance(cache_key, str):
+                continue
+            if needle not in cache_key and not cache_key.endswith(f"::{sandbox_user_key}"):
+                continue
+            if policy and not cache_key.endswith(f"::{policy}"):
+                continue
+            touch(cache_key)
+            touched += 1
+    return touched
+
+
+def _touch_sandbox_activity(
+    *,
+    cache_key: str | None = None,
+    sandbox_user_key: str | None = None,
+    policy: str | None = None,
+) -> None:
+    """按缓存键（首选）或用户键刷新沙箱活跃时间。"""
+    if cache_key:
+        _touch_sandbox_workspace(cache_key)
+        return
+    if sandbox_user_key:
+        _touch_sandbox_workspaces_for_user(sandbox_user_key, policy=policy)
+
+
+async def _conversation_stale_skills_snapshot(
+    *,
+    root: str,
+    user_key: str,
+    conversation_id: str | None,
+    policy: str,
+    user_info: dict[str, Any] | None,
+) -> tuple[str, list[str]] | None:
+    """会话沙箱的技能快照是否已过期；过期返回 ``(沙箱缓存键, 当前技能集合)``。
+
+    **为什么只读入口也要核对**：终端 / ``exec`` 只按标签定位容器就执行命令，此前完全不
+    核对技能快照——管理员禁用/下架技能之后，用户仍能在那台"技能集合已过期"的沙箱里
+    ``ls`` / ``cat`` 甚至执行被禁技能的脚本，直到空闲回收（默认 15 分钟），而这是唯一
+    连"换技能集合就换沙箱"都拦不住的入口。这里把
+    :func:`_sandbox_skills_snapshot_is_current` 接上去。
+
+    技能集合必须从**会话当时的工作区缓存键**恢复：键是 ``<workdir>::<skills_fp>::<policy>``，
+    而 ``skills_fp`` 恰好就是 ``all`` 或 ``custom:<允许列表>``——只读入口手里没有智能体
+    上下文，缓存键是"这条会话当时按哪个白名单建的沙箱"的唯一在进程内的记录。
+
+    取不到记录（进程刚重启、纯宿主策略、或键格式不认识）时返回 ``None``：判不了就放行，
+    与 :func:`_sandbox_skills_snapshot_is_current` 的取舍一致——不能因为判定不了就把用户
+    挡在终端外面。
+    """
+    if not root or not str(conversation_id or "").strip():
+        return None
+    workdir = _conversation_workdir(root, user_key, str(conversation_id).strip())
+    prefix = f"{workdir}::"
+    suffix = f"::{policy}"
+    for workspace_key, sandbox_key in list(_workspace_sandbox_refs.items()):
+        if not isinstance(workspace_key, str) or not isinstance(sandbox_key, str):
+            continue
+        if not workspace_key.startswith(prefix) or not workspace_key.endswith(suffix):
+            continue
+        skills_fp = workspace_key[len(prefix) : len(workspace_key) - len(suffix)]
+        skills_custom = skills_fp.startswith("custom:")
+        allowed_global_skills = (
+            [item for item in skills_fp[len("custom:") :].split(",") if item]
+            if skills_custom
+            else None
+        )
+        try:
+            from app.services.ai.skills.policy import get_forbidden_skill_ids
+
+            forbidden_skill_ids = await get_forbidden_skill_ids(
+                _resolve_identity_user_id(user_info)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[workspace] 只读入口核对技能快照时读取禁用集合失败，本次放行: %s", exc
+            )
+            return None
+        skill_paths = discover_platform_skill_paths(
+            user_info=user_info,
+            skills_custom=skills_custom,
+            allowed_global_skills=allowed_global_skills,
+            forbidden_skill_ids=forbidden_skill_ids,
+        )
+        if await _sandbox_skills_snapshot_is_current(sandbox_key, skill_paths=skill_paths):
+            return None
+        return sandbox_key, skill_paths
+    return None
+
+
+@contextlib.asynccontextmanager
+async def _sandbox_activity_heartbeat(
+    *,
+    cache_key: str | None = None,
+    sandbox_user_key: str | None = None,
+    policy: str | None = None,
+) -> Any:
+    """执行期间周期性刷新沙箱活跃时间，避免长命令被空闲回收中断。
+
+    空闲回收只看 ``last_used``，而它此前只在「拉起沙箱」「缓存命中」「Bash 调用**开始
+    前**」刷新：一条执行超过 ``sandbox_idle_time``（默认 15 分钟）的命令，或者终端里
+    跑的长任务，会在中途被 reaper 关闭容器/Pod（终端侧甚至只在命令**结束后**才刷新）。
+
+    心跳只影响空闲判定，不影响权限逐出（``_evict_*`` 是显式调用，与 ``last_used``
+    无关），所以「技能快照过期 → 立刻作废沙箱」的语义不受影响。
+    """
+    touch_kwargs: dict[str, Any] = {
+        "cache_key": cache_key,
+        "sandbox_user_key": sandbox_user_key,
+        "policy": policy,
+    }
+    _touch_sandbox_activity(**touch_kwargs)
+
+    stop = asyncio.Event()
+
+    async def _beat() -> None:
+        while True:
+            try:
+                idle_seconds = await resolve_effective_sandbox_idle_seconds(
+                    default_seconds=DOCKER_WORKSPACE_IDLE_SECONDS
+                )
+            except Exception:  # noqa: BLE001 - 读配置失败按默认阈值心跳
+                idle_seconds = float(DOCKER_WORKSPACE_IDLE_SECONDS)
+            interval = max(SANDBOX_ACTIVITY_HEARTBEAT_MIN_SECONDS, idle_seconds / 3.0)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                try:
+                    _touch_sandbox_activity(**touch_kwargs)
+                except Exception:  # noqa: BLE001 - 心跳失败不影响命令执行
+                    logger.debug("[workspace] sandbox heartbeat touch failed", exc_info=True)
+                continue
+            return
+
+    beat_task = asyncio.create_task(_beat())
+    try:
+        yield
+    finally:
+        stop.set()
+        beat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await beat_task
 
 
 async def reap_idle_docker_workspaces(
@@ -1924,7 +3083,238 @@ async def reap_idle_docker_workspaces(
             reason="Docker workspace idle timeout",
             expected_last_used=last_used,
         )
+    _prune_idle_workspace_locks()
     return reaped
+
+
+def _prune_idle_workspace_locks() -> int:
+    """丢掉「缓存条目已不在、且当前没人持有」的锁对象，返回清理数量。
+
+    锁字典按缓存键累积，而缓存键含技能集合令牌——白名单每变一次就多一把锁，永不回收
+    （长跑进程里是缓慢泄漏）。**只清理没被持有的锁**：正被 ``async with`` 持有的锁一旦
+    从字典移除，同一键的下一次取用会新建一把锁，两把锁不再互斥，重建工作区时会出现
+    double-build（两套容器/目录）。回收器迭代时正是"空闲"的时机，因此在这里顺手清理。
+    """
+    removed = 0
+    for locks, cache in (
+        (_docker_workspace_locks, _docker_workspace_cache),
+        (_k8s_workspace_locks, _k8s_workspace_cache),
+    ):
+        for cache_key, lock in list(locks.items()):
+            if cache_key in cache or lock.locked():
+                continue
+            locks.pop(cache_key, None)
+            removed += 1
+    return removed
+
+
+# ---------------------------------------------------------------------------
+# 孤儿沙箱对账（进程重启 / 命名演进后脱离进程内注册表的历史容器与 Pod）
+# ---------------------------------------------------------------------------
+#: 空闲回收只遍历进程内字典，因此「缓存里没有」的容器/Pod 永远不会被回收：进程重启
+#: 丢缓存、技能集合令牌变化（升级或白名单变更）都会留下再也无人认领的沙箱，旧命名
+#: （``as_ws_<user>``）连「同名 create_or_replace 顶掉」这条兜底都蹭不到。
+#: 这里按 AgentScope 打在容器/Pod 上的 label 反向对账：凡是不在本进程注册表中、且
+#: **物理创建时间**已超过 ``SANDBOX_ORPHAN_MIN_AGE_SECONDS`` 的，一律回收。
+#:
+#: ⚠️ 该对账只在**单副本**部署下安全：注册表是进程内的，另一个副本正在用的沙箱在本
+#: 进程看来同样"无人认领"。多副本部署必须把 ``sandbox_orphan_reconcile`` 设为 false
+#: （或先把活跃沙箱注册表搬到 Redis），否则副本之间会互删正在使用的沙箱。
+SANDBOX_ORPHAN_RECONCILE_KEY = "sandbox_orphan_reconcile"
+#: 只有创建时间超过它才允许回收：新建中的沙箱（含另一路并发刚拉起的）绝不动。
+SANDBOX_ORPHAN_MIN_AGE_SECONDS = 1800.0
+#: 对账周期：与空闲回收同一循环，但按更长的间隔执行（默认 10 分钟）。
+SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS = 600.0
+
+
+async def _orphan_reconcile_enabled() -> bool:
+    """读取 ``sandbox_orphan_reconcile``（默认开启）。读不到时按开启处理。"""
+    from app.services.config_service import ConfigService
+
+    try:
+        raw = await ConfigService.get(SANDBOX_ORPHAN_RECONCILE_KEY, "true")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] orphan reconcile flag unreadable: %s", exc)
+        return True
+    return str(raw if raw is not None else "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+
+
+def _live_sandbox_workspace_ids(cache: dict[str, Any]) -> set[str]:
+    """本进程注册表中仍然活跃的 ``workspace_id`` 集合（容器名/Pod 名的判据）。"""
+    workspace_ids: set[str] = set()
+    for workspace in list(cache.values()):
+        workspace_id = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if workspace_id:
+            workspace_ids.add(str(workspace_id))
+    return workspace_ids
+
+
+def _container_label(container: Any, key: str) -> str:
+    """从 aiodocker 容器对象上读一个 label（兼容测试替身与真实返回）。"""
+    raw = getattr(container, "_container", None)
+    labels = raw.get("Labels") if isinstance(raw, dict) else None
+    labels = labels if isinstance(labels, dict) else {}
+    return str(labels.get(key) or "")
+
+
+def _container_name(container: Any) -> str:
+    raw = getattr(container, "_container", None)
+    names = raw.get("Names") if isinstance(raw, dict) else None
+    if isinstance(names, list) and names:
+        return str(names[0]).lstrip("/")
+    return str(getattr(container, "id", "") or "")
+
+
+async def reconcile_orphan_docker_workspaces(
+    *,
+    min_age_seconds: float = SANDBOX_ORPHAN_MIN_AGE_SECONDS,
+    now: float | None = None,
+) -> int:
+    """回收本进程不再认知的 Docker 沙箱容器，返回回收数量。
+
+    任何一步失败都只告警：对账是尽力而为的清理，绝不能影响正常的沙箱创建与回收。
+    """
+    try:
+        import aiodocker
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] aiodocker unavailable for orphan reconcile: %s", exc)
+        return 0
+
+    current = time.time() if now is None else now
+    live_ids = _live_sandbox_workspace_ids(_docker_workspace_cache)
+    client: Any | None = None
+    try:
+        client = aiodocker.Docker()
+        listed = await client.containers.list(
+            all=True, filters={"label": "agentscope.workspace=true"}
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] orphan container scan failed: %s", exc)
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.close()
+        return 0
+
+    removed = 0
+    try:
+        for item in listed or []:
+            workspace_id = _container_label(item, "agentscope.workspace.id")
+            if not workspace_id or workspace_id in live_ids:
+                continue
+            raw = getattr(item, "_container", None)
+            try:
+                created = float(raw.get("Created") or 0) if isinstance(raw, dict) else 0.0
+            except (TypeError, ValueError):
+                created = 0.0
+            # 拿不到创建时间就保守跳过：宁可留一台孤儿，也不能误删刚拉起的沙箱。
+            if created <= 0 or current - created < min_age_seconds:
+                continue
+            name = _container_name(item)
+            try:
+                await item.delete(force=True)
+            except Exception as exc:  # noqa: BLE001
+                if getattr(exc, "status", None) != 404:
+                    logger.warning(
+                        "[workspace] Failed to reclaim orphan container %s: %s",
+                        name,
+                        exc,
+                    )
+                continue
+            removed += 1
+            logger.warning(
+                "[workspace] Reclaimed orphan docker sandbox container=%s workspace_id=%s age=%.0fs",
+                name,
+                workspace_id,
+                current - created,
+            )
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.close()
+    return removed
+
+
+async def reconcile_orphan_k8s_workspaces(
+    *,
+    min_age_seconds: float = SANDBOX_ORPHAN_MIN_AGE_SECONDS,
+    now: float | None = None,
+) -> int:
+    """回收本进程不再认知的 K8s 沙箱 Pod，返回回收数量（语义同 Docker 版）。"""
+    try:
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio import config as k8s_async_config
+    except ImportError:
+        return 0
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import resolve_sandbox_namespace
+
+    try:
+        from app.services.config_service import ConfigService
+
+        namespace = resolve_sandbox_namespace(
+            await ConfigService.get("sandbox_k8s_namespace", "")
+        )
+    except Exception:  # noqa: BLE001
+        namespace = resolve_sandbox_namespace(None)
+
+    try:
+        k8s_async_config.load_incluster_config()
+    except Exception:
+        try:
+            await k8s_async_config.load_kube_config()
+        except Exception:
+            return 0
+
+    current = time.time() if now is None else now
+    live_ids = _live_sandbox_workspace_ids(_k8s_workspace_cache)
+    removed = 0
+    try:
+        async with k8s_client.ApiClient() as api_client:
+            core_v1 = k8s_client.CoreV1Api(api_client)
+            pods = await core_v1.list_namespaced_pod(
+                namespace=namespace,
+                label_selector="agentscope.workspace=true",
+            )
+            for pod in getattr(pods, "items", None) or []:
+                metadata = getattr(pod, "metadata", None)
+                labels = getattr(metadata, "labels", None) or {}
+                workspace_id = str(labels.get("agentscope.workspace.id") or "")
+                pod_name = str(getattr(metadata, "name", "") or "")
+                if not pod_name or not workspace_id or workspace_id in live_ids:
+                    continue
+                try:
+                    created = float(metadata.creation_timestamp.timestamp())
+                except Exception:  # noqa: BLE001
+                    created = 0.0
+                if created <= 0 or current - created < min_age_seconds:
+                    continue
+                try:
+                    await core_v1.delete_namespaced_pod(
+                        name=pod_name, namespace=namespace
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[workspace] Failed to reclaim orphan pod %s: %s", pod_name, exc
+                    )
+                    continue
+                removed += 1
+                logger.warning(
+                    "[workspace] Reclaimed orphan k8s sandbox pod=%s namespace=%s workspace_id=%s age=%.0fs",
+                    pod_name,
+                    namespace,
+                    workspace_id,
+                    current - created,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] orphan pod scan failed: %s", exc)
+    return removed
 
 
 async def _docker_workspace_reaper_loop(
@@ -1932,11 +3322,12 @@ async def _docker_workspace_reaper_loop(
     idle_seconds: float,
     interval_seconds: float,
 ) -> None:
+    next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
     while True:
         await asyncio.sleep(interval_seconds)
         try:
             # 空闲时长每次迭代实时读取配置（分钟），无需重启即对 docker 生效
-            effective_idle = await _effective_sandbox_idle_seconds(
+            effective_idle = await resolve_effective_sandbox_idle_seconds(
                 default_seconds=idle_seconds
             )
             await reap_idle_docker_workspaces(idle_seconds=effective_idle)
@@ -1944,6 +3335,17 @@ async def _docker_workspace_reaper_loop(
             raise
         except Exception:  # noqa: BLE001
             logger.exception("[workspace] Docker workspace reaper iteration failed")
+
+        if time.monotonic() < next_reconcile_at:
+            continue
+        next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
+        try:
+            if await _orphan_reconcile_enabled():
+                await reconcile_orphan_docker_workspaces()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("[workspace] Docker orphan reconcile failed")
 
 
 def start_docker_workspace_reaper(
@@ -1990,11 +3392,12 @@ async def _k8s_workspace_reaper_loop(
     idle_seconds: float,
     interval_seconds: float,
 ) -> None:
+    next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
     while True:
         await asyncio.sleep(interval_seconds)
         try:
             # 空闲时长每次迭代实时读取配置（分钟），无需重启即对 k8s 生效
-            effective_idle = await _effective_sandbox_idle_seconds(
+            effective_idle = await resolve_effective_sandbox_idle_seconds(
                 default_seconds=idle_seconds
             )
             await reap_idle_k8s_workspaces(idle_seconds=effective_idle)
@@ -2002,6 +3405,17 @@ async def _k8s_workspace_reaper_loop(
             raise
         except Exception:  # noqa: BLE001
             logger.exception("[workspace] K8s workspace reaper iteration failed")
+
+        if time.monotonic() < next_reconcile_at:
+            continue
+        next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
+        try:
+            if await _orphan_reconcile_enabled():
+                await reconcile_orphan_k8s_workspaces()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("[workspace] K8s orphan reconcile failed")
 
 
 def start_k8s_workspace_reaper(
@@ -2367,32 +3781,42 @@ async def _policy_k8s_workspace(
 
     # 技能治理与 Docker 策略对齐：K8s 下宿主用户工作区经 subPath 挂进沙箱
     # （agent_workspaces/<key> → /workspace），技能根同样落在
-    # <host_workdir>/sandbox/skills，因此可以直接复用同一套指纹失效 / seed 重建 /
-    # 分区同步逻辑，不必为 K8s 另写一份（此前 K8s 分支完全没有这段治理）。
+    # <host_workdir>/sandbox/skills[-<layout>]，因此可以直接复用同一套指纹失效 /
+    # seed 重建 / 分区同步逻辑，不必为 K8s 另写一份（此前 K8s 分支完全没有这段治理）。
     k8s_host_workdir = (
         os.path.join(os.path.abspath(workspace_root), sandbox_user_key)
         if workspace_root and sandbox_user_key
         else None
     )
+    #: 技能集合令牌：与 Pod 名、subPath 目录同源（见 _skill_paths_cache_token）。
+    layout = _skill_paths_cache_token(skill_paths)
     seed_invalidated = False
     skills_fingerprint: str | None = None
     if k8s_host_workdir:
-        os.makedirs(_sandbox_skills_dir(k8s_host_workdir), exist_ok=True)
-        # 个人技能源目录也要存在：它以只读 subPath 挂进沙箱
-        # （/workspace/personal-skills），源目录缺失时挂载会失败。
-        os.makedirs(_personal_skills_dir(k8s_host_workdir), exist_ok=True)
+        # 与 Docker 同一把用户级准备锁（键 = 宿主工作区路径），避免"两个技能集合同时
+        # 迁移历史目录 / 争建个人技能源"。
+        async with _sandbox_host_prepare_lock(k8s_host_workdir):
+            _migrate_legacy_sandbox_skills_dir(k8s_host_workdir, layout)
+            os.makedirs(_sandbox_skills_dir(k8s_host_workdir, layout), exist_ok=True)
+            # 个人技能源目录也要存在：它以只读 subPath 挂进沙箱
+            # （/workspace/personal-skills），源目录缺失时挂载会失败。
+            os.makedirs(_personal_skills_dir(k8s_host_workdir), exist_ok=True)
         # 技能集合或权限变了就作废上一次的 seed 模板，让 initialize() 重新打包。
-        # 与 Docker 同一套指纹（含个人技能库与禁用集合），否则 K8s 下「禁用/删除
-        # 技能后沙箱仍留着旧副本」的窗口会一直存在。
+        # 与 Docker 同一套指纹（技能集合令牌 + 个人技能库 + 公共库），否则 K8s 下
+        # 「换智能体/禁用/删除技能后沙箱仍留着旧副本」的窗口会一直存在。
         seed_invalidated, skills_fingerprint = _invalidate_stale_sandbox_skill_seed(
             k8s_host_workdir,
-            await _sandbox_skills_seed_fingerprint(k8s_host_workdir),
+            await _sandbox_skills_seed_fingerprint(
+                k8s_host_workdir, skill_paths, layout
+            ),
+            layout,
         )
 
     workspace = build_k8s_workspace_with_nanzi_adapter(
         K8sWorkspace,
         existing_pvc=existing_pvc,
         sandbox_user_key=sandbox_user_key,
+        sandbox_skills_layout=layout,
         public_docs_mounted=True,
         local_data_root=workspace_root,
         **kwargs,
@@ -2412,10 +3836,16 @@ async def _policy_k8s_workspace(
     if k8s_host_workdir:
         # 顺序与 Docker 一致：initialize() 里 AgentScope 已按最新 skill_paths 重新
         # 打包 seed，先确认 seed 真的非空，再同步分区并记录指纹，否则打包失败会被
-        # 当成「已是最新」而永久跳过。
+        # 当成「已是最新」而永久跳过。同步失败时不提交指纹，让下次启动重试。
+        sync_failed: list[str] = []
         if seed_invalidated:
-            _sync_public_skills_into_sandbox_partitions(k8s_host_workdir)
-        _commit_sandbox_skills_fingerprint(k8s_host_workdir, skills_fingerprint)
+            _, sync_failed = _sync_public_skills_into_sandbox_partitions(
+                k8s_host_workdir, layout
+            )
+        if not sync_failed:
+            _commit_sandbox_skills_fingerprint(
+                k8s_host_workdir, skills_fingerprint, layout
+            )
     return workspace
 
 
@@ -2744,20 +4174,11 @@ async def get_local_workspace(
         policy = SANDBOX_POLICY_LOCAL
     # Ensure each (workdir, skills, policy) caches independently so an in-flight
     # policy switch never hands back a workspace built under another strategy.
-    cache_key = f"{workdir}::{skills_fp}::{policy}"
-    cached = _workspace_cache.get(cache_key)
-    if cached is not None:
-        sandbox_ws_cached, _ = _normalize_workspace_pair(cached)
-        if isinstance(sandbox_ws_cached, LazySandboxWorkspaceProxy) and not lazy_sandbox:
-            await sandbox_ws_cached.ensure_ready()
-        sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
-        if sandbox_cache_key is not None:
-            _touch_sandbox_workspace(sandbox_cache_key)
-        # 缓存命中不代表权限没变：按当前禁用集合清一次快照（见该函数 docstring）
-        await _prune_forbidden_session_skills(workdir, user_info)
-        return cached
-
-    # 命中已有工作区时扫描结果本来就不会被使用；仅初始化时读取技能目录。
+    #
+    # 技能集合与权限是**物化进沙箱**的（容器/Pod 里物理存在哪些技能由它决定），所以
+    # 每次取用都要核对一次：管理员禁用/下架技能、公共技能内容改动都不改缓存键，
+    # 缓存命中会把老快照直接交出去——沙箱里仍能翻到、能执行那些技能（详见
+    # ``_sandbox_skills_snapshot_is_current``）。
     from app.services.ai.skills.policy import get_forbidden_skill_ids
 
     forbidden_skill_ids = await get_forbidden_skill_ids(_resolve_identity_user_id(user_info))
@@ -2767,6 +4188,39 @@ async def get_local_workspace(
         allowed_global_skills=allowed_global_skills,
         forbidden_skill_ids=forbidden_skill_ids,
     )
+
+    cache_key = f"{workdir}::{skills_fp}::{policy}"
+    cached = _workspace_cache.get(cache_key)
+    if cached is not None:
+        sandbox_ws_cached, _ = _normalize_workspace_pair(cached)
+        sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
+        if sandbox_cache_key is None:
+            # 纯宿主策略，或 lazy 代理尚未拉起：没有物化快照可核对。
+            if isinstance(sandbox_ws_cached, LazySandboxWorkspaceProxy) and not lazy_sandbox:
+                await sandbox_ws_cached.ensure_ready()
+            await _prune_forbidden_session_skills(workdir, user_info)
+            return cached
+        if await _sandbox_skills_snapshot_is_current(
+            sandbox_cache_key,
+            skill_paths=skill_paths,
+        ):
+            if isinstance(sandbox_ws_cached, LazySandboxWorkspaceProxy) and not lazy_sandbox:
+                await sandbox_ws_cached.ensure_ready()
+            _touch_sandbox_workspace(sandbox_cache_key)
+            # 缓存命中不代表权限没变：按当前禁用集合清一次会话快照
+            # （见 ``_prune_forbidden_session_skills`` docstring）
+            await _prune_forbidden_session_skills(workdir, user_info)
+            return cached
+        # 快照已过期：先逐出这台沙箱（连带引用它的会话条目），再落到下面按当前技能
+        # 集合重建容器/Pod。逐出会打断同技能集合上**正在跑**的其它会话那一次 Bash，
+        # 这是权限变更时"宁可报错也不越权执行"的取舍。
+        logger.info(
+            "[workspace] 沙箱技能快照过期，逐出并重建: %s", sandbox_cache_key
+        )
+        await _evict_sandbox_cache_entry(
+            sandbox_cache_key, reason="skill snapshot stale"
+        )
+        cached = None
 
     is_sandbox = policy in (
         SANDBOX_POLICY_DOCKER,
@@ -2791,14 +4245,18 @@ async def get_local_workspace(
                         f"{policy.upper()} sandbox requires an authenticated user identity"
                     )
 
+                # 用与 _acquire_* 完全相同的算键函数判定「沙箱已经活着」：手写键格式
+                # （此前少了技能集合令牌）会恒不命中，结果是一律走 lazy 代理，连
+                # 「建会话即持有引用」的语义都丢了——没用过 Bash 的会话 refcount 为 0，
+                # 别的会话释放/回收就能把它关掉。
                 is_already_alive = False
                 if policy == SANDBOX_POLICY_DOCKER:
-                    d_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{SANDBOX_POLICY_DOCKER}"
+                    d_key = _docker_workspace_cache_key(root, sandbox_user_key, skill_paths)
                     existing_dk = _docker_workspace_cache.get(d_key)
                     if existing_dk is not None and getattr(existing_dk, "is_alive", True) is not False:
                         is_already_alive = True
                 elif policy == SANDBOX_POLICY_K8S:
-                    k_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{SANDBOX_POLICY_K8S}"
+                    k_key = _k8s_workspace_cache_key(root, sandbox_user_key, skill_paths)
                     existing_k8s = _k8s_workspace_cache.get(k_key)
                     if existing_k8s is not None and getattr(existing_k8s, "is_alive", True) is not False:
                         is_already_alive = True
@@ -2839,7 +4297,7 @@ async def get_local_workspace(
         # Pre-seed session skills/ with real copies + matching .skills index so
         # AgentScope's initialize() hash-skips all copies instead of duplicating
         # every skill into each session directory.
-        _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids)
+        _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids, user_info)
         local_ws = LocalWorkspace(
             workdir=workdir,
             skill_paths=skill_paths,
@@ -3021,6 +4479,8 @@ async def docker_workspace_status(
             user_message="缺少当前用户身份，无法查询用户 Docker 沙箱。",
         )
 
+    root = await resolve_workspace_root()
+
     try:
         import aiodocker
     except Exception as exc:  # pragma: no cover - dependency is environment-specific
@@ -3031,10 +4491,24 @@ async def docker_workspace_status(
         ) from exc
 
     client: Any | None = None
-    container_name = f"as_ws_{sandbox_user_key}"
+    # 容器名带技能集合令牌。优先用会话上下文精确算出「该会话正在用的那一台」，再退回
+    # 按容器标签反查该用户的沙箱——同一用户可能有多台（每技能集合一台）。
+    container_name = _docker_container_name(sandbox_user_key)
     try:
         client = aiodocker.Docker()
-        container = await client.containers.get(container_name)
+        container, container_name = await _docker_first_existing_container(
+            client,
+            user_key=sandbox_user_key,
+            root=root,
+            conversation_id=conversation_id,
+        )
+        if container is None:
+            return {
+                "status": "stopped",
+                "execution_backend": SANDBOX_POLICY_DOCKER,
+                "workspace_id": sandbox_user_key,
+                "container_id": None,
+            }
         details = await container.show()
     except Exception as exc:  # noqa: BLE001
         if getattr(exc, "status", None) == 404:
@@ -3144,19 +4618,28 @@ async def stop_docker_workspace(
     await _evict_all_workspaces_for_user(sandbox_user_key, reason="user requested container stop")
 
     # 2. 尝试停止 Docker 实体容器
+    #    一个用户可能有多台沙箱（每技能集合一台），容器名带令牌，因此按标签反查全部候选
+    #    并逐台停掉——只按 `<user_key>` 拼一个名字会漏掉真正在跑的那台。
     try:
         import aiodocker
         client = aiodocker.Docker()
-        container_name = f"as_ws_{sandbox_user_key}"
         try:
-            container = await client.containers.get(container_name)
-            details = await container.show()
-            state = details.get("State") if isinstance(details, dict) else {}
-            if state.get("Running"):
-                await container.stop()
-        except Exception as exc:
-            if getattr(exc, "status", None) != 404:
-                logger.warning("[workspace] Failed to stop container %s: %s", container_name, exc)
+            for container_name in await _docker_sandbox_container_names(
+                client, user_key=sandbox_user_key
+            ):
+                try:
+                    container = await client.containers.get(container_name)
+                    details = await container.show()
+                    state = details.get("State") if isinstance(details, dict) else {}
+                    if state.get("Running"):
+                        await container.stop()
+                except Exception as exc:  # noqa: BLE001
+                    if getattr(exc, "status", None) != 404:
+                        logger.warning(
+                            "[workspace] Failed to stop container %s: %s",
+                            container_name,
+                            exc,
+                        )
         finally:
             await client.close()
     except Exception as exc:
@@ -3216,17 +4699,24 @@ async def restart_docker_workspace(
     # 1. 逐出进程内缓存
     await _evict_all_workspaces_for_user(sandbox_user_key, reason="user requested container restart")
 
-    # 2. 强制删除旧容器
+    # 2. 强制删除旧容器（同上：一个用户可能有多台，逐台删）
     try:
         import aiodocker
         client = aiodocker.Docker()
-        container_name = f"as_ws_{sandbox_user_key}"
         try:
-            container = await client.containers.get(container_name)
-            await container.delete(force=True)
-        except Exception as exc:
-            if getattr(exc, "status", None) != 404:
-                logger.warning("[workspace] Failed to force delete container %s: %s", container_name, exc)
+            for container_name in await _docker_sandbox_container_names(
+                client, user_key=sandbox_user_key
+            ):
+                try:
+                    container = await client.containers.get(container_name)
+                    await container.delete(force=True)
+                except Exception as exc:  # noqa: BLE001
+                    if getattr(exc, "status", None) != 404:
+                        logger.warning(
+                            "[workspace] Failed to force delete container %s: %s",
+                            container_name,
+                            exc,
+                        )
         finally:
             await client.close()
     except Exception as exc:
@@ -3307,12 +4797,27 @@ async def exec_docker_workspace_command(
             user_message="当前后端无法连接 Docker daemon，暂时无法执行命令。",
         ) from exc
 
+    root = await resolve_workspace_root()
+
     client: Any | None = None
-    container_name = f"as_ws_{sandbox_user_key}"
+    # 容器名带技能集合令牌。优先用会话上下文精确算出「该会话正在用的那一台」，再退回
+    # 按标签反查——否则用户点终端可能进到同一用户另一个技能集合的沙箱。
+    container_name = _docker_container_name(sandbox_user_key)
     start_time = time.monotonic()
     try:
         client = aiodocker.Docker()
-        container = await client.containers.get(container_name)
+        container, container_name = await _docker_first_existing_container(
+            client,
+            user_key=sandbox_user_key,
+            root=root,
+            conversation_id=conversation_id,
+        )
+        if container is None:
+            raise DockerSandboxUnavailableError(
+                f"Docker sandbox container not found for {sandbox_user_key}",
+                reason_code="docker_container_not_found",
+                user_message="未找到运行中的 Docker 沙箱容器，请先启动沙箱后再进入终端。",
+            )
         details = await container.show()
         state = details.get("State") if isinstance(details, dict) else {}
         if not state.get("Running"):
@@ -3320,6 +4825,30 @@ async def exec_docker_workspace_command(
                 "Docker sandbox container is not running",
                 reason_code="docker_container_not_running",
                 user_message="Docker 容器未在运行中，请先启动容器后再进入终端。",
+            )
+
+        # 只读入口（终端）也要核对技能快照：禁用/下架之后，这台沙箱里的技能集合可能
+        # 已经"平台认为不可用"，但它还能被 cat / 执行。过期就逐出并拒绝执行，与对话
+        # 取用路径同一取舍（宁可报错也不越权执行）。
+        stale = await _conversation_stale_skills_snapshot(
+            root=root,
+            user_key=sandbox_user_key,
+            conversation_id=conversation_id,
+            policy=SANDBOX_POLICY_DOCKER,
+            user_info=user_info,
+        )
+        if stale is not None:
+            stale_key, _stale_paths = stale
+            await _evict_sandbox_cache_entry(
+                stale_key, reason="terminal_docker_skills_stale"
+            )
+            raise DockerSandboxUnavailableError(
+                "Docker sandbox skills snapshot is stale",
+                reason_code="docker_sandbox_skills_stale",
+                user_message=(
+                    "该沙箱的技能集合已变更（技能被禁用/下架或白名单调整），已重置沙箱。"
+                    "请先发送一条消息拉起新沙箱，再使用终端。"
+                ),
             )
 
         effective_workdir = (workdir or "").strip() or DOCKER_WORKSPACE_LOGICAL_ROOT
@@ -3332,35 +4861,41 @@ async def exec_docker_workspace_command(
             f"printf '\\n{pwd_marker}:%s\\n' \"$PWD\"\n"
             f"exit $__NZ_RET"
         )
-        exec_obj = await container.exec(
-            cmd=["/bin/bash", "-c", wrapped_command],
-            workdir=effective_workdir,
-            stdout=True,
-            stderr=True,
-            stdin=False,
-            tty=False,
-        )
-        stdout_chunks: list[str] = []
-        stderr_chunks: list[str] = []
+        # 终端命令可能长时间运行：执行期间心跳刷新活跃时间，避免容器被空闲回收
+        # （此前只在命令结束后才 touch，长命令跑到一半会被 reaper 关掉）。
+        async with _sandbox_activity_heartbeat(
+            sandbox_user_key=sandbox_user_key,
+            policy=SANDBOX_POLICY_DOCKER,
+        ):
+            exec_obj = await container.exec(
+                cmd=["/bin/bash", "-c", wrapped_command],
+                workdir=effective_workdir,
+                stdout=True,
+                stderr=True,
+                stdin=False,
+                tty=False,
+            )
+            stdout_chunks: list[str] = []
+            stderr_chunks: list[str] = []
 
-        async with exec_obj.start(detach=False) as stream:
-            while True:
-                msg = await stream.read_out()
-                if msg is None:
-                    break
-                stream_type = getattr(msg, "stream", 1)
-                raw_data = getattr(msg, "data", msg)
-                if isinstance(raw_data, (bytes, bytearray)):
-                    text = raw_data.decode("utf-8", errors="replace")
-                else:
-                    text = str(raw_data or "")
-                if stream_type == 2:
-                    stderr_chunks.append(text)
-                else:
-                    stdout_chunks.append(text)
+            async with exec_obj.start(detach=False) as stream:
+                while True:
+                    msg = await stream.read_out()
+                    if msg is None:
+                        break
+                    stream_type = getattr(msg, "stream", 1)
+                    raw_data = getattr(msg, "data", msg)
+                    if isinstance(raw_data, (bytes, bytearray)):
+                        text = raw_data.decode("utf-8", errors="replace")
+                    else:
+                        text = str(raw_data or "")
+                    if stream_type == 2:
+                        stderr_chunks.append(text)
+                    else:
+                        stdout_chunks.append(text)
 
-        inspect_info = await exec_obj.inspect()
-        exit_code = inspect_info.get("ExitCode", 0)
+            inspect_info = await exec_obj.inspect()
+            exit_code = inspect_info.get("ExitCode", 0)
         duration_ms = max(0, int((time.monotonic() - start_time) * 1000))
 
         full_stdout = "".join(stdout_chunks)
@@ -3487,6 +5022,70 @@ async def _evict_all_k8s_workspaces_for_user(sandbox_user_key: str, *, reason: s
             logger.warning("[workspace] Failed to evict k8s cache key %s: %s", key, exc)
 
 
+async def _delete_k8s_sandbox_pods_for_user(sandbox_user_key: str) -> list[str]:
+    """删掉该用户在集群里**真实存在**的所有沙箱 Pod，返回删掉的 Pod 名列表。
+
+    与 Docker 的 ``_docker_sandbox_container_names`` 对齐：Pod 名带技能集合令牌，没法
+    拼出来，只能按 AgentScope 的标签（``agentscope.workspace.id``）反查。只遍历进程内
+    缓存是不够的——进程重启过、Pod 由别的副本创建、或缓存已被逐出时，接口会照样回
+    ``status="stopped"``，而 Pod 仍占着 CPU/内存继续跑（"停止沙箱"变成一句假话），
+    要等孤儿回收器按最小存活时长兜底。
+    """
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        delete_k8s_sandbox_pod,
+        find_k8s_sandbox_pod_names,
+        resolve_sandbox_namespace,
+    )
+
+    try:
+        from app.services.config_service import ConfigService
+
+        namespace = resolve_sandbox_namespace(
+            await ConfigService.get("sandbox_k8s_namespace", "")
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] k8s namespace resolve failed: %s", exc)
+        namespace = resolve_sandbox_namespace(None)
+
+    names: list[str] = []
+    try:
+        names.extend(
+            await find_k8s_sandbox_pod_names(
+                namespace, [_sandbox_workspace_id_pattern(sandbox_user_key)]
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] k8s sandbox pod label scan failed: %s", exc)
+
+    # 标签扫描不可用时退回缓存里已知的 Pod 名，尽量别漏
+    for key in list(_k8s_workspace_cache.keys()):
+        if f"::{sandbox_user_key}::" not in key and not key.endswith(
+            f"::{sandbox_user_key}"
+        ):
+            continue
+        workspace = _k8s_workspace_cache.get(key)
+        pod_name = getattr(workspace, "_pod_name", None) or getattr(
+            workspace, "pod_name", None
+        )
+        if pod_name:
+            names.append(str(pod_name))
+
+    deleted: list[str] = []
+    for pod_name in dict.fromkeys(names):
+        try:
+            if await delete_k8s_sandbox_pod(namespace, pod_name):
+                deleted.append(pod_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[workspace] Failed to delete pod %s: %s", pod_name, exc)
+    if deleted:
+        logger.info(
+            "[workspace] Deleted k8s sandbox pods for %s: %s",
+            sandbox_user_key,
+            ", ".join(deleted),
+        )
+    return deleted
+
+
 async def _k8s_workspace_pod_identity(workspace: Any) -> tuple[str | None, str | None]:
     """Return (namespace, pod_name) best-effort for a live k8s workspace."""
     from app.services.config_service import ConfigService
@@ -3578,7 +5177,7 @@ async def k8s_workspace_status(
     )
 
     root = await resolve_workspace_root()
-    workspace = _find_cached_k8s_workspace(root, user_key)
+    workspace = _find_cached_k8s_workspace(root, user_key, conversation_id=conversation_id)
     if workspace is None or getattr(workspace, "is_alive", True) is False:
         # 进程内无活跃缓存（多 worker 转发、缓存已被回收/reaper 清理等场景）：
         # 仍按约定 Pod 名做一次只读探测真实状态，绝不创建/修改任何资源。
@@ -3684,13 +5283,16 @@ async def k8s_workspace_status(
 async def _k8s_probe_workspace_pod(user_key: str) -> dict[str, Any] | None:
     """Best-effort live Pod probe for a user key without a process-local workspace.
 
-    AgentScope ``K8sWorkspace`` builds the Pod name from ``workspace_id``
-    (``= user_key``) as ``as-ws-<sanitized>``, where ``_`` is replaced by ``-``.
+    AgentScope ``K8sWorkspace`` builds the Pod name from ``workspace_id``; 平台现在把
+    技能集合令牌放进 ``workspace_id``（物理沙箱与缓存条目一一对应），所以这里不再
+    自己拼名字，而是按 AgentScope 的 Pod 标签（``agentscope.workspace.id``）反查该用户
+    真实存在的那个 Pod，再退回历史命名 ``as-ws-<user_key>``。
     Reflection is read-only and never mutates cluster state. Returns a status
     dict when the Pod is found, or ``None`` when absent / probe unavailable
     (callers fall back to ``idle``).
     """
     from app.services.ai.runtime.agentscope.k8s_workspace import (
+        find_k8s_sandbox_pod_name,
         read_k8s_sandbox_pod,
         resolve_sandbox_namespace,
     )
@@ -3699,7 +5301,13 @@ async def _k8s_probe_workspace_pod(user_key: str) -> dict[str, Any] | None:
     namespace = resolve_sandbox_namespace(
         await ConfigService.get("sandbox_k8s_namespace", "")
     )
-    pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
+    pattern = _sandbox_workspace_id_pattern(user_key)
+    try:
+        discovered = await find_k8s_sandbox_pod_name(namespace, [pattern])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] k8s pod label lookup failed for %s: %s", user_key, exc)
+        discovered = None
+    pod_name = discovered or _k8s_pod_name(user_key)
     try:
         info = await read_k8s_sandbox_pod(namespace=namespace, pod_name=pod_name)
     except Exception as exc:  # noqa: BLE001
@@ -3818,11 +5426,15 @@ async def stop_k8s_workspace(
         user_key,
         reason="user requested sandbox stop",
     )
+    # 缓存逐出只关掉"本进程认识的"工作区；集群里真实存在的 Pod 必须按标签再删一遍，
+    # 否则进程重启过/别的副本创建的 Pod 会一直跑着，而接口回的是 "stopped"。
+    deleted_pods = await _delete_k8s_sandbox_pods_for_user(user_key)
     return {
         "status": "stopped",
         "execution_backend": SANDBOX_POLICY_K8S,
         "workspace_id": user_key,
         "pod_name": None,
+        "deleted_pods": deleted_pods,
         "started_at": None,
         "uptime_seconds": None,
     }
@@ -3847,6 +5459,8 @@ async def restart_k8s_workspace(
         user_key,
         reason="user requested sandbox restart",
     )
+    # 重启 = 先真的删掉旧 Pod（含本进程不认识的），再重新物化一台干净的
+    await _delete_k8s_sandbox_pods_for_user(user_key)
 
     workspace_pair = await get_local_workspace(
         user_id=user_id,
@@ -3969,7 +5583,7 @@ async def build_host_only_workspace(
         allowed_global_skills=allowed_global_skills,
         forbidden_skill_ids=forbidden_skill_ids,
     )
-    _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids)
+    _preseed_session_skills(workdir, skill_paths, forbidden_skill_ids, user_info)
     local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)
     await local_ws.initialize()
     return local_ws
@@ -4047,6 +5661,9 @@ def clear_workspace_cache() -> None:
     _k8s_workspace_refcounts.clear()
     _k8s_workspace_locks.clear()
     _k8s_workspace_last_used.clear()
+    # 用户级准备锁只保护同步的目录准备动作，不会被长期持有；这里一并清掉，
+    # 避免测试/长生命周期进程里按路径无限累积。
+    _sandbox_host_prepare_locks.clear()
 
 
 def normalize_workspace_tool_names(tool_names: set[str] | frozenset[str]) -> set[str]:
@@ -5188,11 +6805,63 @@ class LazySandboxBashNativeTool:
             return await self._real_tool.check_read_only(tool_input)
         return False
 
+    def _assert_sandbox_still_registered(self) -> None:
+        """Bash 执行前复核：这台沙箱是否还是注册中的那一台。
+
+        「每次 Bash 前核对状态，而不是匹配命令内容」——命令内容级拦截可以被
+        ``base64``/变量拼接/``python -c`` 轻松绕过，只能核对**状态**：
+
+        * 沙箱因技能权限变更被逐出（:func:`_sandbox_skills_snapshot_is_current`）、
+          被「停止/重启沙箱」清掉、或会话被删除 —— 此时继续执行只会打到一台已经
+          删除或技能集合已过期的容器上，必须拒绝并让本轮重建；
+        * 沙箱仍在注册表中 —— 顺手 ``touch`` 一次，避免长时间连续 Bash（超过空闲
+          回收时长）时被 reaper 误回收。
+
+        注意：一次 Bash 调用**内部**发生的权限变更要等下一次工具调用才会生效（本轮
+        结束后的下一次取用会重建沙箱），这是"状态核对"而非"实时拦截"的固有边界。
+        """
+        cache_key = getattr(self.proxy, "_sandbox_cache_key", None)
+        if not cache_key:
+            return
+        if cache_key in _docker_workspace_cache or cache_key in _k8s_workspace_cache:
+            _touch_sandbox_workspace(cache_key)
+            return
+        if _parse_sandbox_cache_key(cache_key) is None:
+            # 非法/测试替身键：无从判断"是否被逐出"，按未知放行（与实际沙箱键一定可解析
+            # 的事实互补，避免把替身键误判成已回收）。
+            return
+        policy = getattr(self.proxy, "policy", None)
+        user_message = (
+            "沙箱已因技能权限变更或手动停止被回收，本次 Bash 未执行。"
+            "请重新执行一次（平台会在下一次自动按最新技能集合重建沙箱）。"
+        )
+        if policy == SANDBOX_POLICY_K8S or str(cache_key).endswith(f"::{SANDBOX_POLICY_K8S}"):
+            from app.services.ai.runtime.agentscope.k8s_workspace import (
+                K8sSandboxUnavailableError,
+            )
+
+            raise K8sSandboxUnavailableError(
+                f"K8s sandbox was evicted before bash execution: {cache_key}",
+                reason_code="k8s_sandbox_evicted",
+                user_message=user_message,
+            )
+        raise DockerSandboxUnavailableError(
+            f"Docker sandbox was evicted before bash execution: {cache_key}",
+            reason_code="docker_sandbox_evicted",
+            user_message=user_message,
+        )
+
     async def __call__(self, **kwargs: Any) -> Any:
         real_tool = await self._resolve_real_tool()
-        result = real_tool(**kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        self._assert_sandbox_still_registered()
+        # 执行期间持续刷新活跃时间：命令本身可能跑得比 sandbox_idle_time 更久，
+        # 只在开始前 touch 一次会让 reaper 误判为空闲并关掉正在使用的沙箱。
+        async with _sandbox_activity_heartbeat(
+            cache_key=getattr(self.proxy, "_sandbox_cache_key", None)
+        ):
+            result = real_tool(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
         return result
 
 
@@ -5435,17 +7104,29 @@ async def _as_workspace_tool_map(ws: Any) -> dict[str, Any]:
 
 
 async def _k8s_named_pod_identity(user_key: str) -> tuple[str, str]:
-    """Return (namespace, pod_name) derived from config + the user key."""
+    """Return (namespace, pod_name) for a user without a cached workspace.
+
+    Pod 名带技能集合令牌，无从推算，所以优先按 AgentScope 的 Pod 标签
+    （``agentscope.workspace.id``）反查该用户真实存在的 Pod；查不到时退回历史命名
+    ``as-ws-<user_key>``（老部署 Pod 未带令牌时仍能命中）。
+    """
     from app.services.config_service import ConfigService
     from app.services.ai.runtime.agentscope.k8s_workspace import (
+        find_k8s_sandbox_pod_name,
         resolve_sandbox_namespace,
     )
 
     namespace = resolve_sandbox_namespace(
         await ConfigService.get("sandbox_k8s_namespace", "")
     )
-    pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
-    return namespace, pod_name
+    try:
+        discovered = await find_k8s_sandbox_pod_name(
+            namespace, [_sandbox_workspace_id_pattern(user_key)]
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] k8s pod label lookup failed for %s: %s", user_key, exc)
+        discovered = None
+    return namespace, discovered or _k8s_pod_name(user_key)
 
 
 async def exec_k8s_workspace_command(
@@ -5473,7 +7154,7 @@ async def exec_k8s_workspace_command(
     )
 
     root = await resolve_workspace_root()
-    workspace = _find_cached_k8s_workspace(root, user_key)
+    workspace = _find_cached_k8s_workspace(root, user_key, conversation_id=conversation_id)
     if workspace is not None and getattr(workspace, "is_alive", True):
         namespace, pod_name = await _k8s_workspace_pod_identity(workspace)
     else:
@@ -5488,14 +7169,42 @@ async def exec_k8s_workspace_command(
             user_message="未能定位 Kubernetes 沙箱 Pod，请先启动沙箱后再进入终端。",
         )
 
+    # 与 Docker 终端一致：技能集合过期（禁用/下架/白名单调整）时拒绝在这台 Pod 里执行
+    stale = await _conversation_stale_skills_snapshot(
+        root=root,
+        user_key=user_key,
+        conversation_id=conversation_id,
+        policy=SANDBOX_POLICY_K8S,
+        user_info=user_info,
+    )
+    if stale is not None:
+        from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+        stale_key, _stale_paths = stale
+        await _evict_sandbox_cache_entry(stale_key, reason="terminal_k8s_skills_stale")
+        raise K8sSandboxUnavailableError(
+            "K8s sandbox skills snapshot is stale",
+            reason_code="k8s_sandbox_skills_stale",
+            user_message=(
+                "该沙箱的技能集合已变更（技能被禁用/下架或白名单调整），已重置沙箱。"
+                "请先发送一条消息拉起新沙箱，再使用终端。"
+            ),
+        )
+
     from app.services.ai.runtime.agentscope.k8s_workspace import exec_k8s_sandbox_command
 
-    result = await exec_k8s_sandbox_command(
-        namespace=namespace,
-        pod_name=pod_name,
-        command=command,
-        workdir=workdir,
-    )
+    # 终端里的一条命令同样可能跑很久：此前只在命令结束后才刷新活跃时间，执行期间
+    # 沙箱处于「看起来空闲」状态，会被 reaper 关掉（用户看到终端被踢）。
+    async with _sandbox_activity_heartbeat(
+        sandbox_user_key=user_key,
+        policy=SANDBOX_POLICY_K8S,
+    ):
+        result = await exec_k8s_sandbox_command(
+            namespace=namespace,
+            pod_name=pod_name,
+            command=command,
+            workdir=workdir,
+        )
     result["execution_backend"] = SANDBOX_POLICY_K8S
     result["workspace_id"] = user_key
     result["pod_name"] = pod_name

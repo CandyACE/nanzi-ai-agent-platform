@@ -199,10 +199,21 @@ async def test_lazy_sandbox_reuses_already_alive_sandbox(tmp_path, monkeypatch):
         acquire_mock,
     )
 
-    # 预先放入缓存
-    from app.services.ai.runtime.agentscope.workspace import _resolve_sandbox_user_key
+    # 预先放入缓存。键必须用与 _acquire_docker_workspace 相同的算键函数：
+    # 手写键格式（此前少了技能集合令牌）会恒不命中，于是"已存活就直接复用"永远走不到，
+    # 一律退化成 lazy 代理——连"建会话即持有引用"的语义都丢了。
+    from app.services.ai.runtime.agentscope.workspace import (
+        _docker_workspace_cache_key,
+        _resolve_sandbox_user_key,
+    )
+
     user_key = _resolve_sandbox_user_key(user_id="101", user_name="tester", user_info={"user_id": 101, "user_name": "tester"})
-    docker_key = f"{os.path.abspath(str(tmp_path))}::{user_key}::{SANDBOX_POLICY_DOCKER}"
+    wanted_skills = ["/s/only-a"]
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.discover_platform_skill_paths",
+        lambda **kwargs: list(wanted_skills),
+    )
+    docker_key = _docker_workspace_cache_key(str(tmp_path), user_key, wanted_skills)
     _docker_workspace_cache[docker_key] = fake_alive_ws
 
     pair = await get_local_workspace(
@@ -561,3 +572,84 @@ async def test_bind_configured_tools_wraps_k8s_sandbox_bash(tmp_path, monkeypatc
     assert by_name["Bash"].native_tool._default_cwd() == os.path.relpath(
         local_ws.workdir, str(user_root)
     )
+
+
+# ---------------------------------------------------------------------------
+# Bash 前状态核对：命令内容拦不住，但"这台沙箱还在不在"必须拦
+# ---------------------------------------------------------------------------
+
+
+def _evicted_bash_tool(*, policy: str = SANDBOX_POLICY_DOCKER, registered: bool):
+    """构造一个「已解析好真实工具」的懒加载 Bash，沙箱键按需登记。"""
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+
+    proxy = LazySandboxWorkspaceProxy(
+        policy=policy,
+        root="/data",
+        user_key="u1",
+        skill_paths=["/s/alpha"],
+    )
+    tool = LazySandboxBashNativeTool(proxy)
+    tool._real_tool = AsyncMock(return_value="ran")  # 绕过 ensure_ready，直接测核对点
+    if policy == SANDBOX_POLICY_DOCKER:
+        key = ws_module._docker_workspace_cache_key("/data", "u1", ["/s/alpha"])
+        cache = ws_module._docker_workspace_cache
+    else:
+        key = ws_module._k8s_workspace_cache_key("/data", "u1", ["/s/alpha"])
+        cache = ws_module._k8s_workspace_cache
+    proxy._sandbox_cache_key = key
+    if registered:
+        cache[key] = MagicMock()
+        ws_module._docker_workspace_last_used[key] = 0.0
+    return tool, key
+
+
+@pytest.mark.asyncio
+async def test_bash_refuses_after_sandbox_evicted():
+    """★ 沙箱被逐出（技能权限变更 / 手动停止）后，本次 Bash 必须拒绝而不是打空容器。"""
+    from app.services.ai.runtime.agentscope.workspace import DockerSandboxUnavailableError
+
+    tool, key = _evicted_bash_tool(registered=False)
+    with pytest.raises(DockerSandboxUnavailableError) as excinfo:
+        await tool(command="echo hi")
+    assert excinfo.value.reason_code == "docker_sandbox_evicted"
+    assert "未执行" in (excinfo.value.user_message or "")
+    assert key not in _docker_workspace_cache
+
+
+@pytest.mark.asyncio
+async def test_bash_refuses_after_k8s_sandbox_evicted():
+    """K8s 同理，且抛的是 K8s 专用异常（前端提示与降级路径不同）。"""
+    from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+    tool, _key = _evicted_bash_tool(policy=SANDBOX_POLICY_K8S, registered=False)
+    with pytest.raises(K8sSandboxUnavailableError) as excinfo:
+        await tool(command="echo hi")
+    assert excinfo.value.reason_code == "k8s_sandbox_evicted"
+
+
+@pytest.mark.asyncio
+async def test_bash_allows_and_touches_registered_sandbox():
+    """沙箱仍在注册表里：放行，并刷新 last_used（长时间连续 Bash 不被误回收）。"""
+    from app.services.ai.runtime.agentscope.workspace import _docker_workspace_last_used
+
+    tool, key = _evicted_bash_tool(registered=True)
+    _docker_workspace_last_used[key] = 0.0
+    try:
+        assert await tool(command="echo hi") == "ran"
+        assert _docker_workspace_last_used[key] > 0.0, "每次 Bash 都应 touch，避免长任务被 reaper 回收"
+    finally:
+        _docker_workspace_cache.pop(key, None)
+        _docker_workspace_last_used.pop(key, None)
+
+
+@pytest.mark.asyncio
+async def test_bash_tolerates_unknown_cache_key_shape():
+    """测试替身/异常形态的键不参与核对（无从判断是否被逐出时放行，避免误杀）。"""
+    proxy = LazySandboxWorkspaceProxy(
+        policy=SANDBOX_POLICY_DOCKER, root="/data", user_key="u1", skill_paths=["/s/alpha"]
+    )
+    tool = LazySandboxBashNativeTool(proxy)
+    tool._real_tool = AsyncMock(return_value="ran")
+    proxy._sandbox_cache_key = "fake_cache_key"
+    assert await tool(command="echo hi") == "ran"

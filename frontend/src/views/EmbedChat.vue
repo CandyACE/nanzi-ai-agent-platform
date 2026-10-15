@@ -1360,6 +1360,7 @@
         :sandbox-workspace-uptime-seconds="sandboxWorkspaceUptimeSeconds"
         :sandbox-workspace-error="sandboxWorkspaceError"
         :sandbox-backend="sandboxBackend"
+        :sandbox-idle-minutes="contextUsage?.sandbox_idle_minutes ?? null"
         :enable-grounding="config.enableGrounding"
         :show-generating-animation="config.showGeneratingAnimation"
         :grounding-block-mode="config.groundingBlockMode"

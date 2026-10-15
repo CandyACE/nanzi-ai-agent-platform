@@ -230,6 +230,31 @@ def test_preseed_prunes_skills_that_became_forbidden(tmp_path, skills_env):
     assert len(_seeded_dirs(workdir)) == 1
 
 
+def test_preseed_prunes_skills_deleted_from_the_platform(tmp_path, skills_env):
+    """★ 平台侧被删除（或下架）的技能必须从老会话快照里消失。
+
+    与"白名单收窄"要严格区分：删掉源目录才算"来源消失"，窄白名单不算（见下一个用例）。
+    """
+    from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills
+
+    workdir = tmp_path / "session"
+    alpha = str(skills_env.global_root / "alpha")
+    beta = str(skills_env.global_root / "beta")
+    _preseed_session_skills(workdir, [alpha, beta])
+
+    assert _seeded_dirs(workdir) == {"用户列表查询", "beta"}
+
+    # 平台把 beta 删了（下架/删除都落到这一条路径），下次播种必须把它清出快照
+    import shutil as shutil_module
+
+    shutil_module.rmtree(skills_env.global_root / "beta")
+    _preseed_session_skills(workdir, [alpha])
+
+    assert _seeded_dirs(workdir) == {"用户列表查询"}
+    ledger = json.loads((workdir / ".session_skills.json").read_text(encoding="utf-8"))
+    assert "beta" not in json.dumps(ledger, ensure_ascii=False)
+
+
 def test_preseed_keeps_snapshot_when_nothing_is_forbidden(tmp_path, skills_env):
     """没有被禁技能时不做任何清理：源目录临时读不到之类的抖动不能误删整份快照。"""
     from app.services.ai.runtime.agentscope.workspace import _preseed_session_skills

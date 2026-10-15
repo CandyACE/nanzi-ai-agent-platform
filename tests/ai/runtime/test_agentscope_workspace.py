@@ -799,8 +799,14 @@ def test_public_skills_fingerprint_is_none_without_a_skills_root(monkeypatch):
     assert workspace_module._platform_public_skills_fingerprint() is None
 
 
-def test_public_skill_directory_names_include_frontmatter_name(tmp_path, monkeypatch):
-    """AgentScope 按 frontmatter ``name`` 建目录，同步时不能只认源目录名。"""
+def test_public_skill_directory_names_exclude_frontmatter_name(tmp_path, monkeypatch):
+    """只认源目录 basename：frontmatter ``name`` 是 agent 自建技能的目录名。
+
+    AgentScope 打包 seed 用 ``arcname=basename(abspath(path))``（``_setup_skills``），
+    只有通过它自己的技能 API 新建的技能才按 frontmatter name 的 sanitize 结果命名。
+    把 frontmatter name 当成「公共技能目录名」，会让同名自建技能在公共技能被删/被禁时
+    被当作残留清理掉。
+    """
     from app.services.ai.runtime.agentscope import workspace as workspace_module
 
     public = tmp_path / "public-skills"
@@ -811,7 +817,24 @@ def test_public_skill_directory_names_include_frontmatter_name(tmp_path, monkeyp
 
     names = workspace_module._public_skill_directory_names()
 
-    assert {"weather-query", "天气查询与出行建议助手"} <= names
+    assert names == {"weather-query"}
+
+
+def test_public_skill_directory_names_ignore_dirs_without_skill_md(
+    tmp_path, monkeypatch
+):
+    """没有 SKILL.md 的目录不是技能：清理时不能据此判定残留。"""
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+
+    public = tmp_path / "public-skills"
+    _make_public_skill(public, "alpha")
+    (public / "not-a-skill").mkdir()
+    (public / ".hidden").mkdir()
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root", lambda: str(public)
+    )
+
+    assert workspace_module._public_skill_directory_names() == {"alpha"}
 
 
 def test_stale_sandbox_skill_seed_is_invalidated_when_public_skills_change(
@@ -915,11 +938,12 @@ def test_partition_sync_refreshes_public_skills_and_keeps_agent_own_skills(
         (partition / name).mkdir(parents=True)
         (partition / name / "SKILL.md").write_text("old", encoding="utf-8")
 
-    synced = workspace_module._sync_public_skills_into_sandbox_partitions(
+    synced, failed = workspace_module._sync_public_skills_into_sandbox_partitions(
         str(host_workdir)
     )
 
     assert synced == 2  # alpha 覆盖 + beta 清理
+    assert failed == []
     assert sorted(item.name for item in partition.iterdir()) == [
         "agent-own-skill",
         "alpha",
@@ -943,10 +967,9 @@ def test_partition_sync_is_a_noop_without_a_seed(tmp_path, monkeypatch):
     partition = host_workdir / "sandbox" / "skills" / "default"
     partition.mkdir(parents=True)
 
-    assert (
-        workspace_module._sync_public_skills_into_sandbox_partitions(str(host_workdir))
-        == 0
-    )
+    assert workspace_module._sync_public_skills_into_sandbox_partitions(
+        str(host_workdir)
+    ) == (0, [])
 
 
 def test_docker_file_tool_mapping_allows_authorized_public_doc_symlink(tmp_path):
@@ -1744,10 +1767,14 @@ async def test_policy_docker_uses_stable_user_workspace_id_and_isolated_mount(
 
     kwargs = result.kwargs
     assert isinstance(result, FakeDockerWorkspace)
+    # workspace_id 由调用方（_acquire_*）带技能集合令牌传入，policy 原样透传
     assert kwargs["workspace_id"] == "alice__1"
     assert kwargs["host_workdir"] == str(tmp_path / "alice__1")
+    # 技能目录按技能集合令牌分片：空集合 → noskills 分片，不再与历史单份布局混用
     assert result._nanzi_extra_bind_mounts[0] == (
-        str(tmp_path / "alice__1" / "sandbox" / "skills"),
+        workspace_module._sandbox_skills_dir(
+            str(tmp_path / "alice__1"), workspace_module._skill_paths_cache_token([])
+        ),
         "/workspace/skills",
         "rw",
     )

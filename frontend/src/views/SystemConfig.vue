@@ -2665,7 +2665,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     }
     const visibleForPolicy = policyKeySets[policy] || []
     // 通用容器沙箱键（docker/k8s 共用）：仅在 docker/k8s 策略下展示，local/e2b/ssh 不显示
-    const containerCommonKeys = ['sandbox_auto_warm', 'sandbox_idle_time']
+    const containerCommonKeys = ['sandbox_auto_warm', 'sandbox_idle_time', 'sandbox_orphan_reconcile']
     const alwaysVisibleKeys = (policy === 'docker' || policy === 'k8s') ? containerCommonKeys : []
     const order = ['sandbox_policy', ...alwaysVisibleKeys, ...visibleForPolicy]
     list = list.filter(x => x.key === 'sandbox_policy' || visibleForPolicy.includes(x.key) || alwaysVisibleKeys.includes(x.key))
@@ -5209,7 +5209,7 @@ onUnmounted(() => {
                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                              >{{ item.description }}</p>
                           </div>
-                          <div v-else-if="item.key === 'sandbox_auto_warm'">
+                          <div v-else-if="['sandbox_auto_warm', 'sandbox_orphan_reconcile'].includes(item.key)">
                               <div class="flex items-center">
                                 <button
                                   type="button"
@@ -5217,7 +5217,7 @@ onUnmounted(() => {
                                   @click="item.value = item.value === 'true' ? 'false' : 'true'"
                                   class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-inner"
                                   :class="item.value === 'true' ? 'bg-primary' : 'bg-gray-200'"
-                                  aria-label="自动预热沙箱开关"
+                                  :aria-label="item.key === 'sandbox_auto_warm' ? '自动预热沙箱开关' : '孤儿沙箱对账开关'"
                                 >
                                   <span
                                     aria-hidden="true"
@@ -5226,7 +5226,9 @@ onUnmounted(() => {
                                   ></span>
                                 </button>
                                 <span class="ml-3 text-xs font-medium" :class="item.value === 'true' ? 'text-primary font-semibold' : 'text-gray-500'">
-                                  {{ item.value === 'true' ? '已开启（沙箱空闲时自动预热）' : '已关闭（禁用自动预热）' }}
+                                  {{ item.key === 'sandbox_auto_warm'
+                                    ? (item.value === 'true' ? '已开启（沙箱空闲时自动预热）' : '已关闭（禁用自动预热）')
+                                    : (item.value === 'true' ? '已开启（自动回收孤儿沙箱）' : '已关闭（不回收孤儿沙箱）') }}
                                 </span>
                               </div>
                               <p
