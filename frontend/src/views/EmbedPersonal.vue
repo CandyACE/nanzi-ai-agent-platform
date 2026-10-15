@@ -24,6 +24,28 @@
     v-if="gateState === 'granted'"
     class="h-full w-full overflow-y-auto overflow-x-hidden bg-gray-100 custom-scrollbar"
   >
+    <!--
+      返回对话：仅当本次是**从 /embed/chat 跳进来**时出现（判定见 script 的 detectBackToChat）。
+      三条定位约束，都是踩过之后定下来的：
+      1. fixed 而非文档流内元素——本页约定「只出现个人中心本身」，返回键不该占据布局，
+         也不该在滚动时移出视口；
+      2. 放**右下角**：左上角会压住个人中心的 tab 栏（我的权限 / 我的记忆 / 我的 Token 消耗…）；
+      3. **sm:hidden**：宽屏（Web）下此页有完整导航可回退，浮标纯属多余；
+         断点 640px 与 EmbedChat 的 isMobile 口径一致。
+      视觉上默认低调（半透明、无边框无阴影），hover / 聚焦时才提亮，避免与页面内容争注意力。
+    -->
+    <button
+      v-if="backToChat"
+      type="button"
+      class="fixed bottom-3 right-3 z-30 inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 text-xs font-medium text-gray-400 backdrop-blur-sm transition-all hover:bg-white hover:text-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-95 sm:hidden dark:bg-gray-900/70 dark:text-gray-500 dark:hover:bg-gray-900 dark:hover:text-primary"
+      aria-label="返回对话"
+      @click="goBackToChat"
+    >
+      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+      </svg>
+      返回对话
+    </button>
     <PersonalCenter />
   </div>
 
@@ -120,6 +142,7 @@
 // 复用主站个人中心组件：任何 PersonalCenter 的功能更新都会同步到嵌入页，
 // 不在此处复制实现，避免两份代码漂移。
 import { onMounted, onUnmounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import axios from "../utils/axios";
 import PersonalCenter from "./PersonalCenter.vue";
 
@@ -151,6 +174,24 @@ type TicketFailureReason = "" | "origin_not_allowed" | "ticket_invalid";
 const gateState = ref<GateState>("checking");
 const authFailureReason = ref<InitFailureReason>("missing_token");
 const ticketFailureReason = ref<TicketFailureReason>("");
+
+// --- 返回对话 -----------------------------------------------------------------
+// 本页刻意不带 Dashboard 导航（见模板注释），但**从 /embed/chat 跳进来时必须能回去**：
+// 小程序 web-view 里小程序的返回键是「退出整个 web-view」，而不是回退站内路由，
+// 没有这个入口，用户会卡在个人中心并丢掉对话上下文。
+// 反过来，第三方 iframe 直接打开本页时不该凭空多出一个返回键——故用 history.state.back
+// 精确判断来源；不能用 history.length，它在 iframe 里同样会 > 1。
+const router = useRouter();
+const backToChat = ref(false);
+
+const detectBackToChat = () => {
+  const back = (router.options.history.state as { back?: string } | undefined)?.back;
+  backToChat.value = typeof back === "string" && back.startsWith("/embed/chat");
+};
+
+const goBackToChat = () => {
+  router.back();
+};
 
 /** 只有认证类失败才算「未登录」；网络抖动与上游 5xx 不是。 */
 const isAuthFailure = (error: any): boolean => {
@@ -456,6 +497,8 @@ onMounted(() => {
   window.addEventListener("message", handleHostMessage);
 });
 onMounted(verifyCredential);
+// 挂载后再判定来源：setup 阶段首次导航可能尚未落定 history.state.back。
+onMounted(detectBackToChat);
 
 onUnmounted(() => {
   window.removeEventListener("message", handleHostMessage);

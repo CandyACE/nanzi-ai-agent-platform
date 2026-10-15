@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -145,8 +146,12 @@ def test_embedchat_mobile_sheet_content_and_breakpoint_close():
     assert "MobileMessageActionsSheet" in source
     assert "const hasMobileSheetContent = (msg: Message): boolean" in source
     assert "const handleSheetChatbiAction = (action: ChatBIInsightAction, msg: Message)" in source
-    # 跨断点必须关掉抽屉
-    assert "if (wasMobile !== isMobile.value) closeMobileActions();" in source
+    # 跨断点必须关掉抽屉。
+    # 不绑定写法：单行 `if (...) closeMobileActions();` 与代码块两种写法都算通过——
+    # 头部「更多」抽屉收进同一个 if 后，这里从单行变成了块。
+    match = re.search(r"if \(wasMobile !== isMobile\.value\)\s*(\{[^}]*\}|[^\n;]*;)", source)
+    assert match, "未找到跨断点收起抽屉的逻辑"
+    assert "closeMobileActions()" in match.group(1), "跨断点未收起消息操作抽屉"
 
 
 def test_existing_drawers_reuse_the_shared_shell():

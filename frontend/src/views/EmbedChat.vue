@@ -172,21 +172,22 @@
               </div>
             </div>
 
-            <!-- Shortcuts Button -->
-            <div class="relative group inline-flex items-center">
+            <!-- Shortcuts Button（移动端收进「更多」弹层；桌面端仅在
+                 config.showShortcuts 关闭时作为重新打开的入口出现） -->
+            <div v-if="!isMobile" class="relative group inline-flex items-center">
               <button
-                v-if="isMobile || !config.showShortcuts"
+                v-if="!config.showShortcuts"
                 @click="handleHeaderShortcutsClick"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :class="{ 'text-primary bg-primary/10': showShortcutsHint }"
-                :aria-label="isMobile ? '快捷指令' : '显示快捷指令'"
+                aria-label="显示快捷指令"
               >
                 <CommandLineIcon class="h-4 w-4" aria-hidden="true" />
               </button>
-              <div v-if="!showShortcutsHint && (isMobile || !config.showShortcuts)" class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+              <div v-if="!showShortcutsHint && !config.showShortcuts" class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
                 <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
                 <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
-                  {{ isMobile ? '快捷指令' : '显示快捷指令' }}
+                  显示快捷指令
                 </div>
               </div>
 
@@ -200,7 +201,7 @@
                 leave-to-class="opacity-0 -translate-y-1 scale-95"
               >
                 <div
-                  v-if="showShortcutsHint && (isMobile || !config.showShortcuts)"
+                  v-if="showShortcutsHint && !config.showShortcuts"
                   class="absolute right-0 top-full mt-2.5 z-50 flex items-center gap-2.5 whitespace-nowrap rounded-xl border border-primary/20 bg-primary/95 px-3 py-2 text-[12px] text-white shadow-2xl backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95 pointer-events-auto"
                 >
                   <!-- 顶部小尖角 -->
@@ -225,8 +226,8 @@
               </transition>
             </div>
 
-            <!-- Help Button -->
-            <div class="relative group inline-flex items-center">
+            <!-- Help Button（桌面端按钮；移动端收进「更多」弹层） -->
+            <div v-if="!isMobile" class="relative group inline-flex items-center">
               <button
                 @click="showHelpModal = true"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
@@ -244,8 +245,8 @@
               </div>
             </div>
 
-            <!-- Settings Button -->
-            <div class="relative group inline-flex items-center">
+            <!-- Settings Button（桌面端按钮；移动端收进「更多」弹层） -->
+            <div v-if="!isMobile" class="relative group inline-flex items-center">
               <button
                 @click="showSettings = true"
                 class="relative p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
@@ -263,8 +264,8 @@
               </div>
             </div>
 
-            <!-- Server Browser Button -->
-            <div class="relative group inline-flex items-center">
+            <!-- Server Browser Button（桌面端按钮；移动端收进「更多」弹层） -->
+            <div v-if="!isMobile" class="relative group inline-flex items-center">
               <button
                 @click="toggleBrowserPanel"
                 class="relative p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
@@ -280,6 +281,88 @@
                   打开服务端浏览器
                 </div>
               </div>
+            </div>
+
+            <!-- 移动端「更多」：锚定弹层（与输入区「+」弹层同形态，不用底部抽屉）。
+                 min-h-11/min-w-11 = 44px，满足移动端触控热区下限。 -->
+            <div v-if="isMobile" ref="headerMoreRef" class="relative inline-flex items-center">
+              <button
+                type="button"
+                @click="toggleHeaderMore"
+                class="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-all hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800"
+                :class="showHeaderMore ? 'text-primary bg-gray-100 dark:bg-gray-700' : 'text-gray-400'"
+                aria-haspopup="menu"
+                :aria-expanded="showHeaderMore"
+                :aria-label="headerMoreBadge ? '更多（有新状态）' : '更多'"
+              >
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="12" cy="5" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="12" cy="19" r="1.5" />
+                </svg>
+                <span v-if="headerMoreBadge" class="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-gray-800" />
+              </button>
+
+              <transition
+                enter-active-class="transition ease-out duration-100"
+                enter-from-class="transform opacity-0 scale-95"
+                enter-to-class="transform opacity-100 scale-100"
+                leave-active-class="transition ease-in duration-75"
+                leave-from-class="transform opacity-100 scale-100"
+                leave-to-class="transform opacity-0 scale-95"
+              >
+                <div v-if="showHeaderMore" class="absolute top-full right-0 z-50 mt-2 origin-top-right">
+                  <div class="w-52 rounded-xl border border-gray-200 bg-white py-1.5 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
+                      @click="runHeaderMoreSettings"
+                    >
+                      <svg class="h-5 w-5 shrink-0 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                      <span class="flex-1 text-left font-medium">对话设置</span>
+                      <span v-if="config.enableGrounding" class="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    </button>
+
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
+                      @click="runHeaderMoreShortcuts"
+                    >
+                      <CommandLineIcon class="h-5 w-5 shrink-0 text-indigo-500" aria-hidden="true" />
+                      <span class="flex-1 text-left font-medium">快捷指令</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
+                      @click="runHeaderMoreHelp"
+                    >
+                      <svg class="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <span class="flex-1 text-left font-medium">查看帮助</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
+                      @click="runHeaderMoreBrowser"
+                    >
+                      <svg class="h-5 w-5 shrink-0 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="M3 8h18M7 6h.01M10 6h.01"/></svg>
+                      <span class="flex-1 text-left font-medium">服务端浏览器</span>
+                      <span v-if="browserPanelVisible" class="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    </button>
+
+                    <!-- 账号类入口用分隔线与上面的「功能」区分开 -->
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-3 border-t border-gray-100 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:border-gray-700 dark:text-gray-200 dark:hover:bg-primary/20"
+                      @click="runHeaderMoreAccount"
+                    >
+                      <svg class="h-5 w-5 shrink-0 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                      <span class="flex-1 text-left font-medium">我的账号</span>
+                    </button>
+                  </div>
+                </div>
+              </transition>
             </div>
         </div>
       </div>
@@ -7127,6 +7210,56 @@ const closeMobileActions = () => {
   mobileActionsFocus.value = null;
 };
 
+// 移动端头部「更多」弹层：快捷指令 / 帮助 / 服务端浏览器收纳于此。
+// 形态与输入区「+」弹层一致（锚定在被点按钮下方），不用底部抽屉。
+// 桌面端（≥640px）这些入口仍直接显示在头部，本状态恒为 false。
+// 定义位置必须在 updateWidth 之前——updateWidth 在挂载时即被调用，否则会踩 const 的 TDZ。
+const showHeaderMore = ref(false);
+const headerMoreRef = ref<HTMLElement | null>(null);
+/** 弹层里是否存在「值得提示」的状态：给「更多」按钮加小绿点，避免收起后状态不可见。 */
+const headerMoreBadge = computed(() => browserPanelVisible.value || Boolean(config.enableGrounding));
+const toggleHeaderMore = () => {
+  showHeaderMore.value = !showHeaderMore.value;
+};
+const closeHeaderMore = () => {
+  showHeaderMore.value = false;
+};
+
+// 弹层内的动作一律「先关弹层、再触发原动作」：否则 modal / 侧栏会叠在弹层之上，观感割裂。
+const runHeaderMoreSettings = () => {
+  closeHeaderMore();
+  showSettings.value = true;
+};
+const runHeaderMoreShortcuts = () => {
+  closeHeaderMore();
+  handleHeaderShortcutsClick();
+};
+const runHeaderMoreHelp = () => {
+  closeHeaderMore();
+  showHelpModal.value = true;
+};
+const runHeaderMoreBrowser = () => {
+  closeHeaderMore();
+  toggleBrowserPanel();
+};
+// 「我的账号」：跳 /embed/personal。它与 /embed/chat 同 layout、同为 public，
+// 在 iframe / 小程序 web-view 内可直接做 SPA 内切换，不需要走 postMessageToHost。
+// 注意**不能**跳 /dashboard/personal——那是门户路由，嵌入场景下会被守卫拦到登录页。
+const runHeaderMoreAccount = () => {
+  closeHeaderMore();
+  router.push({ name: "EmbedPersonal" });
+};
+
+// 点弹层外部关闭（与 ChatInput 的「+」弹层同做法：document 全局监听 + contains 判定）。
+// 不额外加 @click.stop：按钮本身在容器内，contains 判定会放过它，toggle 行为不受影响。
+const handleHeaderMoreGlobalClick = (event: MouseEvent) => {
+  if (showHeaderMore.value && headerMoreRef.value && !headerMoreRef.value.contains(event.target as Node)) {
+    showHeaderMore.value = false;
+  }
+};
+onMounted(() => document.addEventListener('click', handleHeaderMoreGlobalClick));
+onUnmounted(() => document.removeEventListener('click', handleHeaderMoreGlobalClick));
+
 /** 本条消息是否带数据 / 文件徽标（与「▤ 数据」按钮上两个徽标同条件）。 */
 const hasMessageDataBadge = (msg: Message): boolean =>
   currentMessageReusableCount(msg) > 0 || Boolean(msg.trace_id && artifactCount(msg.trace_id) > 0);
@@ -7183,7 +7316,10 @@ const updateWidth = () => {
   const wasMobile = isMobile.value;
   windowWidth.value = window.innerWidth;
   // 跨过 640px 断点时必须收起抽屉，否则状态会悬空
-  if (wasMobile !== isMobile.value) closeMobileActions();
+  if (wasMobile !== isMobile.value) {
+    closeMobileActions();
+    closeHeaderMore();
+  }
   // Inject device context
   injectedContext.value = {
     ...injectedContext.value,
