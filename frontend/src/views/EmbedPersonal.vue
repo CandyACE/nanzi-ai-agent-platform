@@ -26,22 +26,31 @@
   >
     <!--
       返回对话：仅当本次是**从 /embed/chat 跳进来**时出现（判定见 script 的 detectBackToChat）。
-      三条定位约束，都是踩过之后定下来的：
+      四条约束，都是踩过之后定下来的：
       1. fixed 而非文档流内元素——本页约定「只出现个人中心本身」，返回键不该占据布局，
          也不该在滚动时移出视口；
       2. 放**右下角**：左上角会压住个人中心的 tab 栏（我的权限 / 我的记忆 / 我的 Token 消耗…）；
       3. **sm:hidden**：宽屏（Web）下此页有完整导航可回退，浮标纯属多余；
-         断点 640px 与 EmbedChat 的 isMobile 口径一致。
-      视觉上默认低调（半透明、无边框无阴影），hover / 聚焦时才提亮，避免与页面内容争注意力。
+         断点 640px 与 EmbedChat 的 isMobile 口径一致；
+      4. **min-h-11（44px）**：它是移动端**唯一**的返回入口，必须够大够点。
+         初版为了「低调」写成 text-xs + py-1.5，实际高度仅约 26px——与头部按钮
+         44px 的标准自相矛盾，是明确的可用性缺陷。
+      5. **实底 + 靠阴影与正文分隔**：它压在内容之上，背景必须近乎不透明、并与正文
+         有可见边界，否则底下的字会透出来糊成一片。初版用 bg-white/70 + text-gray-400，
+         用户反馈「是不是有点看不清」。
+         按用户偏好**不用边框**（bg-white/90），因此 **shadow-sm 是唯一的分隔手段**，
+         不能连它一起删掉。
+      所谓「低调」指的是**不用强调色**（不用 primary 实底、不用粗体大字），
+      而**不是降低可读性**——它只降视觉权重，不降尺寸、不降对比度。
     -->
     <button
       v-if="backToChat"
       type="button"
-      class="fixed bottom-3 right-3 z-30 inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 text-xs font-medium text-gray-400 backdrop-blur-sm transition-all hover:bg-white hover:text-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-95 sm:hidden dark:bg-gray-900/70 dark:text-gray-500 dark:hover:bg-gray-900 dark:hover:text-primary"
+      class="fixed bottom-4 right-4 z-30 inline-flex min-h-11 items-center gap-2 rounded-full bg-white/90 px-4 text-sm font-medium text-gray-600 shadow-sm transition-all hover:bg-white hover:text-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-95 sm:hidden dark:bg-gray-900/90 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-primary"
       aria-label="返回对话"
       @click="goBackToChat"
     >
-      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
       </svg>
       返回对话
