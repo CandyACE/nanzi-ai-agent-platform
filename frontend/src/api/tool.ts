@@ -37,6 +37,33 @@ export interface SysApiToolUpdate {
   group_name?: string | null
 }
 
+/** 保存前试跑的请求体：草稿（不落库），测试值只用于这一次请求 */
+export interface SysApiToolPreviewPayload {
+  method: string
+  url_template: string
+  headers?: Record<string, string>
+  parameter_schema?: Record<string, any>
+  params: Record<string, any>
+}
+
+export type PreviewErrorKind =
+  | 'http_error'
+  | 'connection'
+  | 'timeout'
+  | 'invalid_url'
+  | 'unsupported_method'
+  | 'missing_param'
+
+export interface SysApiToolPreviewResult {
+  ok: boolean
+  status_code?: number | null
+  elapsed_ms: number
+  body: string
+  body_truncated: boolean
+  error_kind?: PreviewErrorKind | null
+  message: string
+}
+
 export const toolApi = {
   list: () => {
     return axios.get<SysApiTool[]>('/api/portal/tools')
@@ -63,5 +90,15 @@ export const toolApi = {
       '/api/portal/tools/batch-group',
       { ids, group_name: groupName },
     )
+  },
+
+  /**
+   * 保存前试跑一次。
+   *
+   * 提交的是**草稿**（新建、编辑、改完未保存都走它），服务端不落库、不接收 id；
+   * 服务端走的是与智能体运行时**完全相同**的请求内核，所以这里的结论对运行时有效。
+   */
+  preview: (data: SysApiToolPreviewPayload) => {
+    return axios.post<SysApiToolPreviewResult>('/api/portal/tools/preview', data)
   }
 }

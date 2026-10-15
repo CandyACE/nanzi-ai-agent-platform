@@ -38,7 +38,6 @@ tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_synthesizes_a
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_tool_loop_fuse_triggers_on_global_limit  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_empty_diagnostic_sql_does_not_mark_business_sql_complete  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_schema_keyword_planner_derives_keywords_from_intent_when_llm_keywords_invalid  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_table_in_user_permission_set  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_unqualified_columns_for_single_table_to_avoid_dialect_false_positives  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_blocks_unknown_alias_column_before_execution  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_federated_subquery_gates.py::test_validate_federated_subquery_blocks_static_risk_sql  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -46,14 +45,12 @@ tests/ai/test_p1_optimizations.py::test_knowledge_turn_forces_search_before_answ
 tests/ai/test_request_semantics.py::test_chatbi_state_hint_exposes_semantics_and_evidence_metadata  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_user_question_cancellation.py::test_cancelled_user_question_stops_before_agent_resolution  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_where_condition_sample_diagnostic.py::test_build_where_probe_schema_context_for_dataset_filters_by_dataset  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/tools/test_data_api.py::test_call_external_sql_api_error  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/tools/test_data_api.py::test_get_dataset_schema_tool  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/tools/test_data_api.py::test_get_dataset_schema_tool_local_falls_back_to_mysql_like_when_vector_fails  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/tools/test_session_status.py::test_session_status_context_usage_estimates_full_history_against_budget  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/portal/test_logs_partitions.py::test_partition_service_prune_expired_logs_partitioned  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/portal/test_scenario_templates.py::test_chatbi_scenario_template_precheck_and_install  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chat_context_usage.py::test_context_usage_endpoint_returns_shared_estimate_and_effective_sandbox_runtime  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/api/v1/test_chat_recommend_table_questions.py::test_recommend_table_questions_api_success  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chatbi_execute.py::test_chatbi_execute_uses_session_user_for_openclaw_sql_execution  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chatbi_execute.py::test_direct_sql_dataset_inference_rejects_when_row_filter_required  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_fs_browser.py::test_list_auto_creates_user_uploads_dir  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -78,7 +75,6 @@ tests/test_federated_executor.py::test_federated_executor_security_error_does_no
 tests/test_memory_ebbinghaus_consolidation.py::test_consolidate_user_memories_clustering_and_merging  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_memory_session_summary.py::test_memory_search_uses_context_user_id  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_personal_skills_routes.py::test_platform_skill_list_is_readable_without_management_permission  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_sql_routing.py::test_sql_routing_forced_env_local  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/utils/test_sql_rewriter.py::test_unqualified_all_filter_skips_multi_table_subquery_scope  # A-断言过时: 断言与当前实现漂移，待逐项复核
 
 # --- B-依赖升级适配 ---
@@ -94,6 +90,8 @@ tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_load_injection_config_
 # --- C-环境与配置 ---
 
 # --- D-测试状态污染 ---
+tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_table_in_user_permission_set  # D-测试状态污染: 单独运行通过、全量合跑必失败（受其他用例状态污染），非断言漂移
+tests/ai/tools/test_data_api.py::test_call_external_sql_api_error  # D-测试状态污染: 单独运行通过、全量合跑必失败（受其他用例状态污染），非断言漂移
 tests/api/portal/test_skill_publication_routes.py::test_admin_publication_review_routes_exist  # D-测试状态污染: 技能发布状态残留
 tests/api/portal/test_skill_publication_routes.py::test_personal_publication_submit_route_exists  # D-测试状态污染: 技能发布状态残留
 

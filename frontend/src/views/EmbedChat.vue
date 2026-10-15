@@ -1361,6 +1361,7 @@
         :sandbox-workspace-error="sandboxWorkspaceError"
         :sandbox-backend="sandboxBackend"
         :sandbox-idle-minutes="contextUsage?.sandbox_idle_minutes ?? null"
+        :sandbox-refreshing="sandboxWorkspaceRefreshing"
         :enable-grounding="config.enableGrounding"
         :show-generating-animation="config.showGeneratingAnimation"
         :grounding-block-mode="config.groundingBlockMode"
@@ -5167,6 +5168,7 @@ const {
   showK8sTerminal,
   resetSandboxWorkspaceState,
   refreshSandboxWorkspaceStatus,
+  sandboxWorkspaceRefreshing,
   pollSandboxWorkspaceUntilRunning,
   maybeAutoWarmSandbox,
   ensureSandboxWorkspace,

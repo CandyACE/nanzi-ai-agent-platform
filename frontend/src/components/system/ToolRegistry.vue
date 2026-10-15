@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import {
-    PARAM_TYPE_OPTIONS,
-    parseToolSchema,
-    serializeToolSchema,
-    type ParsedToolSchema,
-    type SchemaParam,
-} from '../../utils/toolSchema'
 import { toolApi, type SysApiTool, type SysApiToolCreate } from '../../api/tool'
+import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
+import ToolParamEditor from './ToolParamEditor.vue'
+import ToolWizard from './ToolWizard.vue'
 import { 
   PencilSquareIcon,
   TrashIcon,
@@ -203,8 +199,11 @@ const confirmBatchGroup = async () => {
     }
 }
 
-const toolMethodOptions = computed(() => Array.from(new Set([
-    'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS',
+// 静态项来自共享清单（不再各写一份）；
+// 再并上「既有数据里真正出现过的方法」——后端 method 无枚举校验，
+// 历史库里的异常值（如 HEAD）若不在选项里就再也筛不出来。
+const toolMethodOptions = computed(() => Array.from(new Set<string>([
+    ...SUPPORTED_HTTP_METHODS,
     ...tools.value.map((tool) => String(tool.method || '').toUpperCase()).filter(Boolean),
 ])))
 
@@ -234,6 +233,11 @@ const fetchTools = async () => {
     }
 }
 
+// 弹窗内的两种填写方式：表单模式是全字段平铺（原有交互），向导模式是 4 步引导。
+// 两者**共用同一份 toolForm**——向导只是填它的另一种交互，所以切 tab 不丢内容，
+// saveTool() 也仍然只有一条保存路径。
+const editorMode = ref<'form' | 'wizard'>('form')
+
 const openModal = (tool?: SysApiTool, isClone = false) => {
     if (tool) {
         isEditing.value = !isClone
@@ -259,78 +263,9 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
             group_name: ''
         }
     }
-    // 打开时就按形态预解析一次，切到可视化即是所见
-    schemaEditorMode.value = 'json'
-    loadVisualFromJson()
+    // 默认进表单模式，保持既有操作路径；向导由用户主动切换
+    editorMode.value = 'form'
     showModal.value = true
-}
-
-// ---------------- 参数定义：JSON / 可视化 双模式 ----------------
-// 解析与序列化放在 utils/toolSchema.ts（纯函数，可用 Node 直接跑往返测试）。
-// 这里只维护 UI 状态：模式、行数据、以及「非法 JSON 不切换」等交互约定。
-type VisualParam = SchemaParam & { key: string }
-
-const schemaEditorMode = ref<'json' | 'visual'>('json')
-const visualParams = ref<VisualParam[]>([])
-const parsedSchema = ref<ParsedToolSchema>({ shape: 'flat', hadRequiredList: false, rest: {}, params: [] })
-let visualParamSeed = 0
-
-const nextVisualParamKey = () => {
-    visualParamSeed += 1
-    return `param-${visualParamSeed}`
-}
-
-// 嵌套参数（带 items / properties 子结构）在可视化里只能改类型、描述与必填，
-// 子结构本身请回 JSON 模式编辑——这里只做提示。
-const visualNestedCount = computed(() => visualParams.value.filter(
-    (param) => param.extra.items || param.extra.properties
-).length)
-
-const loadVisualFromJson = (): boolean => {
-    const parsed = parseToolSchema(toolForm.value.parameter_schema_str)
-    if (!parsed) {
-        showToast('参数定义不是合法 JSON，请先修正后再切到可视化编辑', 'error')
-        return false
-    }
-    parsedSchema.value = parsed
-    visualParams.value = parsed.params.map((param) => ({ ...param, key: nextVisualParamKey() }))
-    return true
-}
-
-const buildSchemaJson = (): string => serializeToolSchema({
-    shape: parsedSchema.value.shape,
-    hadRequiredList: parsedSchema.value.hadRequiredList,
-    rest: parsedSchema.value.rest,
-    // 剥掉仅用于 v-for 的 key：它不属于 schema 数据
-    params: visualParams.value.map(({ key, ...param }) => param),
-})
-
-const addVisualParam = () => {
-    visualParams.value = [...visualParams.value, {
-        key: nextVisualParamKey(),
-        name: '',
-        type: 'string',
-        required: true,
-        description: '',
-        defaultValue: '',
-        extra: {},
-    }]
-}
-
-const removeVisualParam = (index: number) => {
-    visualParams.value = visualParams.value.filter((_, i) => i !== index)
-}
-
-const switchSchemaMode = (mode: 'json' | 'visual') => {
-    if (mode === schemaEditorMode.value) return
-    if (mode === 'visual') {
-        // JSON 非法时留在原地：既不丢用户输入，也能让他看到错在哪
-        if (!loadVisualFromJson()) return
-        schemaEditorMode.value = 'visual'
-        return
-    }
-    toolForm.value.parameter_schema_str = buildSchemaJson()
-    schemaEditorMode.value = 'json'
 }
 
 const cloneTool = (tool: SysApiTool) => {
@@ -631,10 +566,42 @@ onMounted(() => {
       <!-- Modal -->
       <Teleport to="body">
         <div v-if="showModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
-            <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
-                <h3 class="text-lg font-bold text-gray-900">{{ isEditing ? '编辑工具' : '添加新工具' }}</h3>
+            <div class="bg-white rounded-xl shadow-xl max-w-5xl w-full p-6 space-y-4 text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h3 class="text-lg font-bold text-gray-900">{{ isEditing ? '编辑工具' : '添加新工具' }}</h3>
+                    <!-- 两种填写方式：选中态给足对比（白底 + 蓝字 + 蓝描边），未选中压到灰底上 -->
+                    <div class="flex rounded-xl bg-gray-200/70 p-1 text-xs ring-1 ring-inset ring-gray-200" role="group" aria-label="填写方式">
+                        <button
+                            type="button"
+                            class="rounded-lg px-3 py-1.5 font-medium transition-all"
+                            :class="editorMode === 'form'
+                                ? 'bg-white font-semibold text-primary shadow-sm ring-1 ring-primary/40'
+                                : 'text-gray-500 hover:bg-white/70 hover:text-gray-700'"
+                            :aria-pressed="editorMode === 'form'"
+                            @click="editorMode = 'form'"
+                        >表单模式</button>
+                        <button
+                            type="button"
+                            class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-all"
+                            :class="editorMode === 'wizard'
+                                ? 'bg-white font-semibold text-primary shadow-sm ring-1 ring-primary/40'
+                                : 'text-gray-500 hover:bg-white/70 hover:text-gray-700'"
+                            :aria-pressed="editorMode === 'wizard'"
+                            @click="editorMode = 'wizard'"
+                        >向导模式<span
+                            class="rounded-full px-1.5 text-[11px] font-semibold"
+                            :class="editorMode === 'wizard' ? 'bg-primary/10 text-primary' : 'bg-gray-300/70 text-gray-600'"
+                        >推荐小白使用</span></button>
+                    </div>
+                </div>
               
-                <div class="space-y-4">
+                <!-- 向导模式：4 步引导，写的是同一份 toolForm -->
+                <ToolWizard
+                    v-if="editorMode === 'wizard'"
+                    :tool-form="toolForm"
+                />
+
+                <div v-else class="space-y-4">
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                            <label class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
@@ -643,10 +610,7 @@ onMounted(() => {
                         <div>
                            <label class="block text-sm font-medium text-gray-700">HTTP 方法</label>
                            <select v-model="toolForm.method" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
-                               <option value="GET">GET</option>
-                               <option value="POST">POST</option>
-                               <option value="PUT">PUT</option>
-                               <option value="DELETE">DELETE</option>
+                               <option v-for="method in SUPPORTED_HTTP_METHODS" :key="method" :value="method">{{ method }}</option>
                            </select>
                         </div>
                     </div>
@@ -662,64 +626,7 @@ onMounted(() => {
                        <textarea v-model="toolForm.description" rows="2" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="描述工具的功能..."></textarea>
                     </div>
                   
-                    <div>
-                       <div class="flex flex-wrap items-center gap-2">
-                          <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
-                          <div class="flex bg-gray-100 p-0.5 rounded-lg text-xs" role="group" aria-label="参数定义编辑模式">
-                             <button
-                                type="button"
-                                class="px-2.5 py-1 rounded-md transition-all font-medium"
-                                :class="schemaEditorMode === 'json' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                                @click="switchSchemaMode('json')"
-                             >JSON</button>
-                             <button
-                                type="button"
-                                class="px-2.5 py-1 rounded-md transition-all font-medium"
-                                :class="schemaEditorMode === 'visual' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                                @click="switchSchemaMode('visual')"
-                             >可视化</button>
-                          </div>
-                          <span v-if="schemaEditorMode === 'visual' && visualNestedCount > 0" class="text-xs text-amber-600">
-                             有 {{ visualNestedCount }} 个嵌套参数：可改类型/描述/必填，子结构请用 JSON 模式编辑
-                          </span>
-                       </div>
-                       <textarea v-if="schemaEditorMode === 'json'" v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
-                       <div v-else class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
-                          <p v-if="visualParams.length === 0" class="px-1 py-1 text-xs text-gray-400">还没有参数，点下面的「+ 添加参数」开始</p>
-                          <div v-for="(p, index) in visualParams" :key="p.key" class="flex flex-wrap items-center gap-2 rounded-md bg-white p-2 shadow-sm">
-                             <input v-model="p.name" class="w-40 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono" placeholder="参数名" />
-                             <select v-model="p.type" class="w-24 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono">
-                                <option v-for="option in PARAM_TYPE_OPTIONS" :key="option" :value="option">{{ option }}</option>
-                             </select>
-                             <label class="flex items-center gap-1 text-xs text-gray-600">
-                                <input type="checkbox" v-model="p.required" class="h-3.5 w-3.5 text-primary focus:ring-primary border-gray-300 rounded" />
-                                必填
-                             </label>
-                             <input v-model="p.description" class="min-w-[10rem] flex-1 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs" placeholder="描述（给 LLM 看）" />
-                             <input v-model="p.defaultValue" :disabled="p.required" class="w-32 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono disabled:bg-gray-100" :placeholder="p.required ? '默认值（需非必填）' : '默认值'" />
-                             <span v-if="p.extra.items || p.extra.properties" class="rounded-full bg-amber-50 px-2 text-xs leading-5 text-amber-700" title="嵌套子结构请用 JSON 模式编辑">嵌套</span>
-                             <button
-                                type="button"
-                                class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                                :title="`删除参数 ${p.name || index + 1}`"
-                                :aria-label="`删除参数 ${p.name || index + 1}`"
-                                @click="removeVisualParam(index)"
-                             >
-                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                             </button>
-                          </div>
-                          <button
-                             type="button"
-                             class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                             @click="addVisualParam"
-                          >+ 添加参数</button>
-                          <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>（运行时缺省按必填处理，默认值只在非必填时生效）</p>
-                       </div>
-                       <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
-                    </div>
-                  
+                    <ToolParamEditor v-model="toolForm.parameter_schema_str" />
                     <div>
                        <label class="block text-sm font-medium text-gray-700">业务分组</label>
                        <input v-model="toolForm.group_name" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示未分组）" />

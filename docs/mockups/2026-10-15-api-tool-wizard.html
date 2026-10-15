@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>添加工具 · 向导模式 Mockup</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-hover:#4096ff; --primary-soft:rgba(22,119,255,.10);
+    --border:#d1d5db; --border-soft:#e5e7eb;
+    --ink:#111827; --ink-2:#374151; --ink-3:#6b7280; --ink-4:#9ca3af;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+    color:var(--ink); -webkit-font-smoothing:antialiased;
+    position:relative; min-height:1040px;
+    /* —— 模拟被遮罩的系统配置页背景（列表条 + 标题） —— */
+    background:
+      repeating-linear-gradient(to bottom, rgba(255,255,255,.92) 0 38px, rgba(255,255,255,0) 38px 50px),
+      radial-gradient(120% 60% at 30% 0%, #f8fafc 0%, #eef1f6 60%, #e7ebf2 100%);
+    background-position: 36px 84px, 0 0;
+    background-size: calc(100% - 72px) auto, cover;
+    background-repeat: repeat-y, no-repeat;
+  }
+  .overlay{
+    position:absolute; inset:0; background:rgba(17,24,39,.5);
+    display:flex; align-items:flex-start; justify-content:center; padding:26px 16px;
+  }
+  .page-title{
+    position:absolute; top:30px; left:36px; font-size:20px; font-weight:600;
+    color:#111827; opacity:.5
+  }
+  .modal{
+    width:900px; max-width:100%; background:#fff; border-radius:14px;
+    box-shadow:0 24px 48px -12px rgba(0,0,0,.35); overflow:hidden;
+  }
+  .modal-head{padding:20px 24px 0}
+  .modal-head h3{font-size:18px;font-weight:700}
+  .seg{display:inline-flex;background:#f3f4f6;border-radius:9px;padding:3px;margin-top:14px}
+  .seg button{
+    border:0;background:transparent;font:inherit;font-size:13px;font-weight:600;
+    color:var(--ink-4);padding:6px 14px;border-radius:7px;cursor:pointer
+  }
+  .seg button.on{background:#fff;color:var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.10)}
+  .seg .badge{font-size:11px;font-weight:600;background:var(--primary-soft);color:var(--primary);
+    border-radius:999px;padding:1px 7px;margin-left:6px}
+  .modal-body{padding:18px 24px 22px}
+  .modal-foot{
+    padding:16px 24px;border-top:1px solid #f3f4f6;background:#fcfcfd;
+    display:flex;align-items:center;justify-content:space-between;gap:12px
+  }
+  .modal-foot .hint{font-size:12px;color:var(--ink-4)}
+  .btn{border:0;font:inherit;font-size:14px;font-weight:500;padding:9px 16px;border-radius:7px;cursor:pointer}
+  .btn-ghost{background:#fff;border:1px solid var(--border);color:var(--ink-2)}
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-primary:hover{background:var(--primary-hover)}
+  .btn-sm{font-size:12.5px;padding:6px 11px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  /* —— 步骤条 —— */
+  .steps{display:flex;align-items:center;gap:0;margin:2px 0 20px}
+  .step{display:flex;align-items:center;gap:9px;cursor:pointer;padding:2px 0}
+  .step .dot{
+    width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+    font-size:12.5px;font-weight:700;border:1.5px solid var(--border);color:var(--ink-4);background:#fff
+  }
+  .step .cap{font-size:13.5px;font-weight:500;color:var(--ink-4);white-space:nowrap}
+  .step.on .dot{background:var(--primary);border-color:var(--primary);color:#fff}
+  .step.on .cap{color:var(--ink);font-weight:600}
+  .step.done .dot{background:#e6f4ea;border-color:#a7d7b8;color:#1a7f37}
+  .step.done .cap{color:var(--ink-2)}
+  .bar{flex:1;height:1.5px;background:var(--border-soft);margin:0 12px;min-width:18px}
+  .bar.on{background:#a7d7b8}
+
+  .label{display:block;font-size:13.5px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+  .help{font-size:12px;color:var(--ink-3);margin-top:6px;line-height:1.6}
+  .input,textarea.input,select.input{
+    width:100%;border:1px solid var(--border);border-radius:7px;padding:9px 12px;
+    font:inherit;font-size:14px;color:var(--ink);background:#fff
+  }
+  textarea.input{resize:vertical;line-height:1.6}
+  .input:focus,textarea.input:focus,select.input:focus{
+    outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)
+  }
+  .input.mono,textarea.input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+  .grid2{display:grid;grid-template-columns:1fr 240px;gap:16px}
+  .field{margin-bottom:16px}
+
+  /* —— 解析结果卡 —— */
+  .parsed-card{border:1px solid #d6e7ff;background:#f5faff;border-radius:10px;padding:14px 16px;margin-top:14px}
+  .parsed-card .hd{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:#0b4ea2}
+  .parsed-card .ok{width:17px;height:17px;border-radius:50%;background:#1a7f37;color:#fff;
+    display:grid;place-items:center;font-size:11px;font-weight:700}
+  .kv{display:grid;grid-template-columns:96px 1fr;gap:6px 12px;margin-top:12px;font-size:13px}
+  .kv dt{color:var(--ink-3)}
+  .kv dd{color:var(--ink);word-break:break-all}
+  .kv dd.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-size:12px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--ink-2)}
+  .chip b{font-weight:600}
+  .warn{margin-top:12px;display:flex;gap:8px;border:1px solid #fde68a;background:#fffbeb;
+    border-radius:9px;padding:10px 12px;font-size:12.5px;color:#92400e;line-height:1.6}
+
+  /* —— 参数行 —— */
+  .p-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .p-toolbar .sum{font-size:12.5px;color:var(--ink-2)}
+  .p-toolbar .sum b{color:var(--ink)}
+  .p-rows{display:flex;flex-direction:column;gap:9px}
+  .p-row{border:1px solid var(--border-soft);border-radius:9px;background:#fbfcfd;padding:10px 12px}
+  .p-row .l1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .p-name{width:132px;border:1px solid var(--border);border-radius:6px;padding:5px 9px;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;background:#fff}
+  .tag{font-size:11px;font-weight:600;border-radius:5px;padding:2px 7px;white-space:nowrap}
+  .tag.path{background:#f3e8ff;color:#7e22ce;border:1px solid #e9d5ff}
+  .tag.query{background:#e0edff;color:#0b4ea2;border:1px solid #c7ddff}
+  .tag.body{background:#e6f4ea;color:#1a7f37;border:1px solid #bfe3cb}
+  .p-type{border:1px solid var(--border);border-radius:6px;padding:5px 7px;font-size:12.5px;background:#fff}
+  .p-req{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+  .p-req input{width:14px;height:14px;accent-color:var(--primary)}
+  .p-sug{font-size:11.5px;color:var(--ink-4)}
+  .p-desc{width:100%;border:1px solid var(--border);border-radius:6px;padding:5px 9px;
+    font-size:12.5px;background:#fff;margin-top:8px}
+  .stale{display:flex;align-items:center;gap:8px;border:1px dashed #fdba74;background:#fff7ed;
+    border-radius:8px;padding:8px 11px;font-size:12.5px;color:#9a3412;margin-bottom:10px}
+  .stale button{margin-left:auto}
+
+  /* —— 试跑 —— */
+  .try-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .try-in{display:flex;flex-direction:column;gap:5px}
+  .try-in label{font-size:12.5px;color:var(--ink-2);font-family:ui-monospace,Menlo,monospace}
+  .try-in .req{color:#dc2626}
+  .try-in input{border:1px solid var(--border);border-radius:6px;padding:6px 9px;font-size:12.5px;
+    font-family:ui-monospace,Menlo,monospace}
+  .result{margin-top:14px;border:1px solid var(--border-soft);border-radius:10px;overflow:hidden}
+  .result .rhead{display:flex;align-items:center;gap:10px;padding:9px 13px;background:#f0fdf4;border-bottom:1px solid #dcfce7}
+  .result .rhead .st{font-size:12.5px;font-weight:700;color:#15803d;background:#dcfce7;border-radius:5px;padding:2px 8px}
+  .result .rhead .ms{font-size:12.5px;color:var(--ink-3)}
+  .result pre{
+    margin:0;padding:12px 14px;background:#0f172a;color:#e2e8f0;font-size:12px;line-height:1.65;
+    font-family:ui-monospace,Menlo,Consolas,monospace;overflow:auto;max-height:180px
+  }
+  .result pre .k{color:#7dd3fc}
+  .result pre .s{color:#86efac}
+  .notes{margin-top:12px;border:1px solid var(--border-soft);background:#fafafa;border-radius:9px;padding:11px 13px}
+  .notes li{font-size:12px;color:var(--ink-3);line-height:1.85;list-style:none;position:relative;padding-left:14px}
+  .notes li::before{content:"·";color:var(--ink-4);font-weight:700;position:absolute;left:4px}
+
+  .hidden{display:none !important}
+  .section-hd{font-size:13px;font-weight:700;color:var(--ink-2);margin:2px 0 10px}
+  .divider{height:1px;background:#f3f4f6;margin:18px 0}
+  .ro-tag{font-size:11px;color:var(--ink-4);background:#f3f4f6;border-radius:4px;padding:1px 6px;margin-left:6px}
+</style>
+</head>
+<body>
+
+<div class="page-title">系统配置</div>
+
+<div class="overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>添加新工具</h3>
+      <div class="seg">
+        <button id="tab-form" onclick="go('form')">表单模式</button>
+        <button id="tab-wizard" onclick="go('step1')">向导模式<span class="badge">推荐小白使用</span></button>
+      </div>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- ============ 向导模式 ============ -->
+      <div id="wizard">
+        <div class="steps">
+          <div class="step" id="s1" onclick="go('step1')"><div class="dot">1</div><div class="cap">粘贴请求</div></div>
+          <div class="bar" id="b1"></div>
+          <div class="step" id="s2" onclick="go('step2')"><div class="dot">2</div><div class="cap">起名与描述</div></div>
+          <div class="bar" id="b2"></div>
+          <div class="step" id="s3" onclick="go('step3')"><div class="dot">3</div><div class="cap">确认参数</div></div>
+          <div class="bar" id="b3"></div>
+          <div class="step" id="s4" onclick="go('step4')"><div class="dot">4</div><div class="cap">试跑一次</div></div>
+        </div>
+
+        <!-- 第 1 步 -->
+        <div id="p1">
+          <div class="field">
+            <label class="label">把接口文档里的请求粘进来</label>
+            <textarea class="input mono" rows="4">curl -X POST 'https://api.example.com/v1/orders/{order_id}/refund' \
+  -H 'Authorization: Bearer sk-xxxx' \
+  -H 'Content-Type: application/json' \
+  -d '{"amount": 100, "reason": "客户申请"}'</textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+              <button class="btn btn-primary btn-sm">解析这条请求</button>
+              <button class="btn btn-ghost btn-sm">粘贴示例</button>
+              <span class="help" style="margin:0">也支持只粘一条完整 URL（含 <code>?a=1&amp;b=2</code>）</span>
+            </div>
+          </div>
+
+          <div class="parsed-card">
+            <div class="hd"><span class="ok">✓</span>已识别，不用你手填</div>
+            <dl class="kv">
+              <dt>请求方法</dt><dd>POST</dd>
+              <dt>接口地址</dt><dd class="mono">https://api.example.com/v1/orders/{order_id}/refund</dd>
+              <dt>路径参数</dt><dd><div class="chips"><span class="chip"><b>order_id</b>（地址里的 { } 占位）</span></div></dd>
+              <dt>请求体参数</dt><dd><div class="chips"><span class="chip"><b>amount</b> = 100</span><span class="chip"><b>reason</b> = 客户申请</span></div></dd>
+              <dt>请求头</dt><dd><div class="chips"><span class="chip">Authorization: Bearer sk-****（已脱敏显示）</span><span class="chip">Content-Type: application/json</span></div></dd>
+            </dl>
+            <div class="warn">
+              <span>⚠️</span>
+              <span>这是 <b>POST</b> 请求，平台会把它当作<b>只读查询工具</b>使用，但请求会<b>真实发出</b>——请确认该接口确实是查询语义，不要注册有副作用的接口。</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 第 2 步 -->
+        <div id="p2" class="hidden">
+          <div class="grid2">
+            <div class="field">
+              <label class="label">工具名称（唯一标识，给模型看的）</label>
+              <input class="input mono" value="refund_order" />
+              <div class="help">建议用英文小写 + 下划线，一眼能看出干什么</div>
+            </div>
+            <div class="field">
+              <label class="label">业务分组</label>
+              <input class="input" value="订单售后" />
+              <div class="help">智能体配置会按它归组</div>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label">这个工具是干什么的？（描述，模型靠它决定什么时候调用）</label>
+            <textarea class="input" rows="3">根据订单号发起退款申请。适用于客户要求退货退款的场景，需要提供退款金额与原因。</textarea>
+            <div class="help">💡 写清「什么场景下用它」比写清「它做什么」更重要——模型是按场景选工具的。</div>
+          </div>
+          <div class="field">
+            <label class="label">请求头 <span class="ro-tag">从第 1 步带入，如需修改可在此编辑</span></label>
+            <textarea class="input mono" rows="2">{ "Authorization": "Bearer sk-xxxx", "Content-Type": "application/json" }</textarea>
+          </div>
+        </div>
+
+        <!-- 第 3 步 -->
+        <div id="p3" class="hidden">
+          <div class="stale">
+            <span>⚠️</span>
+            <span>你在第 1 步改过请求地址：这里的参数可能已过期。<b>不会自动覆盖</b>你手改的内容。</span>
+            <button class="btn btn-ghost btn-sm">重新生成参数</button>
+          </div>
+          <div class="p-toolbar">
+            <div class="sum">从你的请求里识别出 <b>3</b> 个参数：<b>1</b> 个必填、<b>2</b> 个可选（URL 里带了值，已自动设为可选 + 默认值）</div>
+          </div>
+          <div class="p-rows">
+            <div class="p-row">
+              <div class="l1">
+                <input class="p-name" value="order_id" />
+                <span class="tag path">路径参数</span>
+                <select class="p-type"><option>string</option></select>
+                <label class="p-req"><input type="checkbox" checked />必填</label>
+                <span class="p-sug">地址里的 {order_id} 需要替换，所以必填</span>
+              </div>
+              <input class="p-desc" value="订单号，例如 A20260115001" />
+            </div>
+            <div class="p-row">
+              <div class="l1">
+                <input class="p-name" value="amount" />
+                <span class="tag body">请求体</span>
+                <select class="p-type"><option>number</option></select>
+                <label class="p-req"><input type="checkbox" />必填</label>
+                <span class="p-sug">原始请求里带了值 100 → 已设为可选，默认值 100</span>
+              </div>
+              <input class="p-desc" value="退款金额（元）" />
+            </div>
+            <div class="p-row">
+              <div class="l1">
+                <input class="p-name" value="reason" />
+                <span class="tag body">请求体</span>
+                <select class="p-type"><option>string</option></select>
+                <label class="p-req"><input type="checkbox" />必填</label>
+                <span class="p-sug">原始请求里带了值 → 已设为可选，默认值「客户申请」</span>
+              </div>
+              <input class="p-desc" value="退款原因" />
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="margin-top:10px">+ 添加参数</button>
+          <div class="divider"></div>
+          <div class="section-hd">高级：直接编辑参数定义（JSON Schema）</div>
+          <textarea class="input mono" rows="7" readonly style="background:#f9fafb">{
+  "order_id": { "type": "string", "description": "订单号，例如 A20260115001" },
+  "amount":   { "type": "number", "description": "退款金额（元）", "required": false, "default": 100 },
+  "reason":   { "type": "string", "description": "退款原因", "required": false, "default": "客户申请" }
+}</textarea>
+          <div class="help">上面改的每一项都会实时同步到这里。这一栏与表单模式里的「参数定义」是<b>同一份数据、同一个编辑器</b>。</div>
+        </div>
+
+        <!-- 第 4 步 -->
+        <div id="p4" class="hidden">
+          <div class="p-toolbar">
+            <div class="sum">填入一组测试值，真正调一次看看通不通。<b>测试值不会保存到工具配置里。</b></div>
+          </div>
+          <div class="try-grid">
+            <div class="try-in"><label>order_id <span class="req">*</span></label><input value="A20260115001" /></div>
+            <div class="try-in"><label>amount</label><input value="100" /></div>
+            <div class="try-in"><label>reason</label><input value="客户申请" /></div>
+          </div>
+          <div style="margin-top:13px">
+            <button class="btn btn-primary btn-sm">▶ 试跑一次</button>
+          </div>
+
+          <div class="result">
+            <div class="rhead">
+              <span class="st">200 OK</span>
+              <span class="ms">耗时 412 ms · POST https://api.example.com/v1/orders/A20260115001/refund</span>
+              <span class="ms" style="margin-left:auto">原始响应</span>
+            </div>
+            <pre>{
+  <span class="k">"code"</span>: 0,
+  <span class="k">"message"</span>: <span class="s">"退款申请已受理"</span>,
+  <span class="k">"data"</span>: { <span class="k">"refund_id"</span>: <span class="s">"RF202601150001"</span>, <span class="k">"status"</span>: <span class="s">"processing"</span> }
+}</pre>
+          </div>
+
+          <div class="notes">
+            <ul>
+              <li>试跑由<b>平台服务器</b>发起，走的是与智能体运行时<b>完全相同</b>的请求逻辑（同一个方法和参数落位规则）。</li>
+              <li>失败会分清是「接口通了但拒绝」（如 404 / 401）还是「根本连不上」（DNS / 超时 / 证书），这两种情况给的排查建议不同。</li>
+              <li>每次试跑都会记审计日志；若目标地址是内网或回环地址，这里会显示醒目提示（但不会阻止你试跑）。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 表单模式 ============ -->
+      <div id="form" class="hidden">
+        <div class="grid2">
+          <div class="field"><label class="label">工具名称 (唯一标识)</label><input class="input mono" value="refund_order" /></div>
+          <div class="field"><label class="label">HTTP 方法</label>
+            <select class="input"><option>GET</option><option selected>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select>
+            <div class="help">本次修复：补上原先缺失的 PATCH</div>
+          </div>
+        </div>
+        <div class="field"><label class="label">URL 模板</label>
+          <input class="input mono" value="https://api.example.com/v1/orders/{order_id}/refund" />
+          <div class="help">使用 {param} 标记需要替换的参数</div>
+        </div>
+        <div class="field"><label class="label">描述</label>
+          <textarea class="input" rows="2">根据订单号发起退款申请。适用于客户要求退货退款的场景，需要提供退款金额与原因。</textarea>
+        </div>
+        <div class="field">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <label class="label" style="margin:0">参数定义 (JSON Schema)</label>
+            <div class="seg" style="margin:0"><button class="on">JSON</button><button>可视化</button></div>
+            <span class="help" style="margin:0">← 与向导第 3 步是同一份数据、同一个编辑器</span>
+          </div>
+          <textarea class="input mono" rows="5">{
+  "order_id": { "type": "string", "description": "订单号，例如 A20260115001" },
+  "amount":   { "type": "number", "description": "退款金额（元）", "required": false, "default": 100 },
+  "reason":   { "type": "string", "description": "退款原因", "required": false, "default": "客户申请" }
+}</textarea>
+        </div>
+        <div class="field"><label class="label">业务分组</label><input class="input" value="订单售后" /></div>
+      </div>
+
+    </div>
+
+    <div class="modal-foot">
+      <span class="hint" id="foot-hint">第 1 / 4 步 · 粘贴请求后点「解析」</span>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost">取消</button>
+        <button class="btn btn-ghost" id="prev" onclick="nav(-1)">上一步</button>
+        <button class="btn btn-primary" id="next" onclick="primaryAction()">下一步</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var view = 'step1';
+  var step = 1;
+  var hints = {
+    step1:'第 1 / 4 步 · 粘贴请求后点「解析」',
+    step2:'第 2 / 4 步 · 名称与描述会直接影响模型选不选得对',
+    step3:'第 3 / 4 步 · 确认参数；改过的内容不会被自动覆盖',
+    step4:'第 4 / 4 步 · 试跑通过后即可保存',
+    form:'表单模式 · 保留原有全部字段'
+  };
+  function go(v){
+    view = v;
+    if (v !== 'form') step = parseInt(v.replace('step',''), 10);
+    for (var i=1;i<=4;i++){
+      document.getElementById('p'+i).classList.toggle('hidden', v !== 'step'+i);
+      var s = document.getElementById('s'+i);
+      s.classList.toggle('on', v === 'step'+i);
+      s.classList.toggle('done', v !== 'form' && i < step);
+      var bar = document.getElementById('b'+i);
+      if (bar) bar.classList.toggle('on', v !== 'form' && i < step);
+    }
+    document.getElementById('wizard').classList.toggle('hidden', v === 'form');
+    document.getElementById('form').classList.toggle('hidden', v !== 'form');
+    document.getElementById('tab-wizard').classList.toggle('on', v !== 'form');
+    document.getElementById('tab-form').classList.toggle('on', v === 'form');
+    document.getElementById('foot-hint').textContent = hints[v];
+    document.getElementById('prev').style.display = (v === 'form' || step === 1) ? 'none' : '';
+    document.getElementById('prev').disabled = (v === 'form' || step === 1);
+    var next = document.getElementById('next');
+    next.textContent = (v === 'form') ? '保存' : (step === 4 ? '保存工具' : '下一步');
+  }
+  function nav(d){ var n = step + d; if (n>=1 && n<=4) go('step'+n); }
+  function primaryAction(){ if (view === 'form') return; var n = step + 1; if (n <= 4) go('step' + n); }
+  (function(){ var h = location.hash.replace('#',''); go(h === 'form' ? 'form' : (['step1','step2','step3','step4'].indexOf(h)>=0 ? h : 'step1')); })();
+</script>
+</body>
+</html>

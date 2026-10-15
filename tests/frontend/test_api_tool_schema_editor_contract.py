@@ -10,6 +10,11 @@
 
 结论：可视化编辑器只接管 ``properties`` / ``required``，其余顶层键（如 ``x-nanzi-evidence-types``）
 与参数级其余键（如 ``items`` / ``properties`` 子结构）必须原样保留，且不改变原有结构形态。
+
+**锚点迁移说明（2026-10-15 加向导模式时）**：编辑器从 ``ToolRegistry.vue`` 抽成了共享组件
+``ToolParamEditor.vue``——因为「添加工具」有了表单/向导两个 tab，参数编辑 UI 若各写一份必然
+逐渐漂移，而参数定义正是运行时真正消费的东西。以下与编辑器 UI 相关的断言随之指向新组件；
+与入口（``openModal``）相关的断言留在 ``ToolRegistry.vue``。
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from pathlib import Path
 import pytest
 
 REGISTRY = Path("frontend/src/components/system/ToolRegistry.vue")
+PARAM_EDITOR = Path("frontend/src/components/system/ToolParamEditor.vue")
 SCHEMA_UTIL = Path("frontend/src/utils/toolSchema.ts")
 GENERIC_API = Path("app/services/ai/tools/generic_api.py")
 
@@ -52,7 +58,7 @@ def _body(source: str, marker: str) -> str:
 # 前端：JSON / 可视化 双模式
 # --------------------------------------------------------------------------- #
 def test_schema_editor_offers_both_modes():
-    source = _source(REGISTRY)
+    source = _source(PARAM_EDITOR)
     assert "schemaEditorMode" in source
     assert "switchSchemaMode" in source
     assert ">JSON</button>" in source
@@ -61,27 +67,29 @@ def test_schema_editor_offers_both_modes():
 
 def test_textarea_only_renders_in_json_mode():
     """可视化模式下仍然露出 JSON 文本框就等于两套输入在打架。"""
-    source = _source(REGISTRY)
+    source = _source(PARAM_EDITOR)
     assert 'v-if="schemaEditorMode === \'json\'"' in source
-    assert 'v-model="toolForm.parameter_schema_str"' in source
+    # 组件对文本是受控的：JSON 模式直接写回 modelValue
+    assert ':value="modelValue"' in source
 
 
 def test_switching_to_visual_keeps_invalid_json_untouched():
     """JSON 写错时不能切走：否则用户既看不到原文本，也不知道错在哪。"""
-    body = _body(_source(REGISTRY), "const switchSchemaMode")
+    body = _body(_source(PARAM_EDITOR), "const switchSchemaMode")
     assert "loadVisualFromJson()" in body
     assert re.search(r"if\s*\(\s*!\s*loadVisualFromJson\s*\(\s*\)\s*\)", body), body
     assert "return" in body
 
 
 def test_switching_back_serializes_visual_rows():
-    body = _body(_source(REGISTRY), "const switchSchemaMode")
+    body = _body(_source(PARAM_EDITOR), "const switchSchemaMode")
     assert "buildSchemaJson()" in body
-    assert "toolForm.value.parameter_schema_str" in body
+    # 组件不再直接摸 toolForm，而是通过受控值写回
+    assert "update:modelValue" in body
 
 
 def test_visual_rows_expose_name_type_required_description_default():
-    source = _source(REGISTRY)
+    source = _source(PARAM_EDITOR)
     for field in ("p.name", "p.type", "p.required", "p.description", "p.defaultValue"):
         assert field in source, f"可视化行缺少 {field}"
     # 类型下拉由常量数组驱动（比硬编码 6 个 option 更好维护），这里校验那个数组
@@ -94,7 +102,7 @@ def test_visual_rows_expose_name_type_required_description_default():
 
 
 def test_visual_rows_can_be_added_and_removed():
-    source = _source(REGISTRY)
+    source = _source(PARAM_EDITOR)
     assert "addVisualParam" in source
     assert "removeVisualParam" in source
     assert "添加参数" in source
@@ -102,7 +110,7 @@ def test_visual_rows_can_be_added_and_removed():
 
 def test_default_value_only_applies_to_optional_params():
     """运行时只在非必填时读取 ``default``，必填参数上填默认值是误导。"""
-    source = _source(REGISTRY)
+    source = _source(PARAM_EDITOR)
     assert ':disabled="p.required"' in source
 
 
@@ -113,8 +121,8 @@ def test_visual_editor_preserves_unknown_top_level_keys():
     serialize = _body(_source(SCHEMA_UTIL), "export const serializeToolSchema")
     assert "...schema.rest" in serialize
     # 组件不得自己拼 schema，必须走纯函数
-    registry = _source(REGISTRY)
-    assert "serializeToolSchema" in registry and "parseToolSchema" in registry
+    editor = _source(PARAM_EDITOR)
+    assert "serializeToolSchema" in editor and "parseToolSchema" in editor
 
 
 def test_visual_editor_preserves_per_param_extras():
@@ -146,7 +154,7 @@ def test_visual_editor_detects_standard_and_flat_shapes():
 
 
 def test_nested_params_are_flagged_to_the_user():
-    source = _source(REGISTRY)
+    source = _source(PARAM_EDITOR)
     assert "visualNestedCount" in source
     assert "JSON 模式" in source
     assert "嵌套" in source
@@ -154,9 +162,19 @@ def test_nested_params_are_flagged_to_the_user():
 
 def test_imported_tool_schema_is_loaded_by_shape_not_assumption():
     """编辑已有工具时要先按形态解析，不能假定某一种写法。"""
-    source = _source(REGISTRY)
-    open_modal = _body(_source(REGISTRY), "const openModal")
-    assert "loadVisualFromJson" in open_modal
+    body = _body(_source(PARAM_EDITOR), "const loadVisualFromJson")
+    assert "parseToolSchema(" in body
+    assert "modelValue" in body
+    # 外部值变化时必须重新同步，否则行内改动会把外部刚写进来的 schema 覆盖掉
+    assert re.search(r"watch\s*\(", _source(PARAM_EDITOR)), "缺少对 modelValue 的同步"
+
+
+def test_both_tabs_share_one_param_editor():
+    """表单模式与向导模式必须共用同一个编辑器——两份参数 UI 必然逐渐漂移。"""
+    registry = _source(REGISTRY)
+    assert "ToolParamEditor" in registry, "表单/向导应通过 ToolParamEditor 渲染参数区"
+    # 编辑器仍绑在 toolForm 上：向导只是「填它的另一种交互」，不是第二个数据源
+    assert 'v-model="toolForm.parameter_schema_str"' in registry
 
 
 # --------------------------------------------------------------------------- #

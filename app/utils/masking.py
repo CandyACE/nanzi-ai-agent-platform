@@ -18,6 +18,9 @@ SENSITIVE_KEYS_FULL = {
 SENSITIVE_KEYS_SUB = {
     "password", "passwd", "pwd",
     "access_token", "refresh_token",
+    # 带 `auth` 的 token 写法（X-Auth-Token / authToken）——与 access_token 同类，
+    # 原先只在 FULL 里有精确的 `auth`，`x_auth_token` 归一化后仍不命中任何子串。
+    "auth_token", "authtoken",
     "api_key", "apikey",
     "client_secret", "app_secret",
     # 覆盖 session_token / sessionToken(camel) / portal_session / embed_session 及其变体
@@ -35,6 +38,17 @@ SENSITIVE_KEYS_SUB = {
 _CREDENTIAL_VALUE_PATTERN = re.compile(
     r"\b(?:emb_ses_|sess_|emt_|nzi_)[A-Za-z0-9_\-]{6,}"
 )
+
+
+def _normalize_key_name(key: Any) -> str:
+    """把键名归一化后再比对名单。
+
+    HTTP 头习惯用连字符（``X-Api-Key`` / ``X-Auth-Token``），而名单是按**下划线**
+    写的（``api_key``）。不归一化的话，只要用户用了连字符写法，密钥就会以明文落进
+    审计库——``Authorization`` 恰好被精确命中，反而是 ``X-Api-Key`` 这种更常见的
+    写法漏掉。``Content-Type`` 归一化后是 ``content_type``，不命中任何敏感词，不会误伤。
+    """
+    return str(key).lower().replace("-", "_").replace(" ", "_")
 
 
 def _mask_credential_values(text: str) -> str:
@@ -68,13 +82,13 @@ def mask_sensitive_data(data: Any) -> Any:
     if isinstance(data, dict):
         # 特殊处理 {"key": "llm_api_key", "value": "..."} 这种配置模式
         if "key" in data and "value" in data and isinstance(data["key"], str):
-            key_name = data["key"].lower()
+            key_name = _normalize_key_name(data["key"])
             if key_name in SENSITIVE_KEYS_FULL or any(sk in key_name for sk in SENSITIVE_KEYS_SUB):
                 return {**data, "value": "******"}
 
         new_dict = {}
         for k, v in data.items():
-            k_lower = k.lower()
+            k_lower = _normalize_key_name(k)
             # 检查键名是否敏感
             is_sensitive = k_lower in SENSITIVE_KEYS_FULL or any(sk in k_lower for sk in SENSITIVE_KEYS_SUB)
             
@@ -102,16 +116,19 @@ def _regex_mask_string(text: str) -> str:
     # 合并所有可能的敏感词进行正则匹配
     all_keys = SENSITIVE_KEYS_FULL | SENSITIVE_KEYS_SUB
     sorted_keys = sorted(list(all_keys), key=len, reverse=True)
-    keys_pattern = "|".join(sorted_keys)
+    # 名单按下划线书写，正则里同时接受连字符，覆盖 `X-Api-Key: xxx` 这类头写法
+    keys_pattern = "|".join(key.replace("_", "[-_]") for key in sorted_keys)
     
     masked_text = text
     
     # 1. 匹配 Query params 或 简单键值对: key=value 或 key:value
-    kv_pattern = rf'((?:^|[&? \t])(?:{keys_pattern}))(?:[:=])([^& \t\n\r]+)'
+    # 键名前可能还带前缀（`X-Api-Key` 的 `X-`、`my_api_key` 的 `my_`）；
+    # 不给前缀留位置的话，`(?:^|[&? \t])` 会把这一类常见写法整条放过。
+    kv_pattern = rf'((?:^|[&? \t])[A-Za-z0-9_\-]*?(?:{keys_pattern}))(?:[:=])([^& \t\n\r]+)'
     masked_text = re.sub(kv_pattern, r'\1=******', masked_text, flags=re.IGNORECASE)
     
     # 2. 匹配 JSON 样式的字符串: "key": "value"
-    json_like_pattern = rf'("(?i:{keys_pattern})"\s*[:=]\s*")([^"]+)(")'
+    json_like_pattern = rf'("(?i:[A-Za-z0-9_\-]*?(?:{keys_pattern}))"\s*[:=]\s*")([^"]+)(")'
     masked_text = re.sub(json_like_pattern, r'\1******\3', masked_text, flags=re.IGNORECASE)
     
     # 3. 按凭据前缀兜底：字段名未收录时也能抹掉凭据值

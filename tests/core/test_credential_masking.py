@@ -105,3 +105,48 @@ def test_non_credential_values_are_left_alone():
     }
 
     assert mask_sensitive_data(payload) == payload
+
+
+# --------------------------------------------------------------------------- #
+# HTTP 头风格键名：名单按下划线书写，而头习惯用连字符
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "key",
+    ["Authorization", "X-Api-Key", "x-api-key", "Api-Key", "X-Auth-Token", "X-Access-Token"],
+)
+def test_http_header_style_credential_keys_are_masked(key):
+    """工具试跑会把用户填的 headers 作为请求体提交，请求体再进审计。
+
+    这些键名原先只有 ``Authorization`` 恰好被精确命中；``X-Api-Key`` 这种更常见的
+    写法因为「连字符 vs 下划线」的差异整条漏过，密钥**明文落进审计库**。
+    """
+    masked = mask_sensitive_data({"headers": {key: "secret-value-123"}})
+
+    assert masked["headers"][key] == "******"
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["Content-Type", "Accept", "X-Request-Id", "User-Agent", "cache_key", "sort_key", "ticket_id"],
+)
+def test_header_key_normalization_does_not_over_mask(key):
+    """归一化只放大既有名单的覆盖面，不能把普通头也抹掉。"""
+    masked = mask_sensitive_data({"headers": {key: "plain-value-123"}})
+
+    assert masked["headers"][key] == "plain-value-123"
+
+
+def test_header_style_keys_masked_inside_a_full_request_body():
+    """贴合试跑请求的真实形状：headers 嵌在 JSON 请求体里。"""
+    masked = mask_sensitive_data(
+        {
+            "method": "GET",
+            "url_template": "https://api.test/v1/items",
+            "headers": {"X-Api-Key": "secret-value-123", "Content-Type": "application/json"},
+            "params": {"id": "7"},
+        }
+    )
+
+    assert masked["headers"]["X-Api-Key"] == "******"
+    assert masked["headers"]["Content-Type"] == "application/json"
+    assert masked["params"] == {"id": "7"}

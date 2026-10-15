@@ -1699,6 +1699,7 @@ const {
   showDockerTerminal,
   showK8sTerminal,
   refreshSandboxWorkspaceStatus,
+  sandboxWorkspaceRefreshing,
   ensureSandboxWorkspace,
   handleStopSandboxWorkspaceRequest,
   confirmStopSandboxWorkspace,
@@ -5214,6 +5215,7 @@ onUnmounted(() => {
           :sandbox-workspace-error="sandboxWorkspaceError"
           :sandbox-backend="sandboxBackend"
           :sandbox-idle-minutes="contextUsage?.sandbox_idle_minutes ?? null"
+          :sandbox-refreshing="sandboxWorkspaceRefreshing"
           @start-sandbox-workspace="ensureSandboxWorkspace"
           @refresh-sandbox-workspace="refreshSandboxWorkspaceStatus"
           @stop-sandbox-workspace="handleStopSandboxWorkspaceRequest"
