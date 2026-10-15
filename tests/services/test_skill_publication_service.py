@@ -686,3 +686,170 @@ async def test_revoke_never_deletes_a_recorded_path_belonging_to_another_skill(t
 
     assert bystander.is_dir(), "记录位置指向别的技能时必须跳过，不能误删"
     assert not own_dir.exists(), "自己的约定位置照常删除"
+
+
+# ---------------------------------------------------------------------------
+# 审查回归（第四轮 review）：物化失败的磁盘安全 / 重新提交后的下架能力 / 状态流转并发保护
+# ---------------------------------------------------------------------------
+
+
+def test_materialize_staging_failure_keeps_live_platform_skill(tmp_path):
+    """★ 物化**准备阶段**失败绝不能删掉正在线上服务的平台技能目录。
+
+    旧实现的 except 分支无条件 ``rmtree(target)``：拷快照/校验（甚至 ``os.replace`` 目标
+    到备份那一步自身）失败时，target 还是**正在服务的那份线上内容**，却被删掉且没有备份
+    可恢复——"审核通过失败"的代价是线上技能消失。
+    """
+    skills_root = tmp_path / "global"
+    live = skills_root / PLATFORM_SKILL_ID
+    live.mkdir(parents=True)
+    (live / "SKILL.md").write_text("LIVE-CONTENT", encoding="utf-8")
+    snapshot = _snapshot_dir(tmp_path)
+
+    with (
+        patch("app.services.skill_publication_service.settings", _settings(tmp_path)),
+        patch(
+            "app.services.skill_publication_service._copy_tree_contents",
+            side_effect=RuntimeError("disk full"),
+        ),
+    ):
+        with pytest.raises(RuntimeError):
+            materialize_snapshot(
+                snapshot_path=str(snapshot),
+                platform_skill_id=PLATFORM_SKILL_ID,
+                version_number=2,
+            )
+
+    assert live.is_dir(), "准备阶段失败时线上目录必须原样保留"
+    assert (live / "SKILL.md").read_text(encoding="utf-8") == "LIVE-CONTENT"
+    # 临时目录不能留在技能库里（否则会被运行时当技能扫到）
+    leftovers = [p.name for p in skills_root.iterdir() if p.name.startswith(".")]
+    assert leftovers == []
+
+
+def test_materialize_write_failure_restores_previous_content(tmp_path):
+    """写元数据失败发生在"新内容已就位"之后：必须回滚成上一版内容，而不是留个空目录。"""
+    skills_root = tmp_path / "global"
+    live = skills_root / PLATFORM_SKILL_ID
+    live.mkdir(parents=True)
+    (live / "SKILL.md").write_text("LIVE-CONTENT", encoding="utf-8")
+    snapshot = _snapshot_dir(tmp_path)
+
+    with (
+        patch("app.services.skill_publication_service.settings", _settings(tmp_path)),
+        patch(
+            "app.services.skill_publication_service._write_platform_metadata",
+            side_effect=RuntimeError("read-only fs"),
+        ),
+    ):
+        with pytest.raises(RuntimeError):
+            materialize_snapshot(
+                snapshot_path=str(snapshot),
+                platform_skill_id=PLATFORM_SKILL_ID,
+                version_number=2,
+            )
+
+    assert (live / "SKILL.md").read_text(encoding="utf-8") == "LIVE-CONTENT", "必须回滚到上一版"
+    assert [p.name for p in skills_root.iterdir() if p.name.startswith(".")] == []
+
+
+@pytest.mark.asyncio
+async def test_revoke_still_works_after_a_new_version_was_submitted(tmp_path):
+    """★ 已发布谱系又提交了一版（status 被写成 PENDING）时，线上版本仍然必须能下架。
+
+    下架判据此前要求 ``publication.status == "PUBLISHED"``，而"作者提交新版本"会把这条
+    汇总状态改成 PENDING → 管理员再也下架不掉正在线上服务的那一版（真实故障）。
+    现在只按版本事实判定：版本 APPROVED 且版本号 == current_version。
+    """
+    publication, version, skill_dir, _snapshot = _pair(
+        tmp_path, publication_status="PENDING", version_status="APPROVED", current_version=1
+    )
+    session = _FakeDbSession(_FakeResult([(version, publication)]))
+
+    with patch("app.services.skill_publication_service.settings", _settings(tmp_path)):
+        payload = await revoke_published_version(
+            session, version_id="version-1", reviewer={"user_id": 1}, comment="内容不合规"
+        )
+
+    assert not skill_dir.exists(), "下架必须真的删掉线上目录"
+    assert version.status == "REVOKED"
+    assert payload["publication_status"] == "REVOKED"
+
+
+@pytest.mark.asyncio
+async def test_list_published_shows_version_clobbered_to_pending(tmp_path):
+    """可下架列表同样只看版本事实：汇总状态被写成 PENDING 的在线技能仍要出现在列表里。"""
+    publication, version, _skill_dir, _snapshot = _pair(
+        tmp_path, publication_status="PENDING", version_status="APPROVED", current_version=1
+    )
+    session = _FakeDbSession(_FakeResult([(version, publication)]))
+
+    rows = await list_published_publications(session)
+
+    assert [row["publication_id"] for row in rows] == ["publication-1"]
+    assert rows[0]["platform_skill_id"] == PLATFORM_SKILL_ID
+
+
+@pytest.mark.asyncio
+async def test_submit_resubmission_keeps_publication_published(tmp_path):
+    """★ 已上线谱系重新提交新版本时，汇总状态必须保持 PUBLISHED（否则下架能力丢失）。
+
+    "有待审新版本"由版本行表达（payload.pending_version），不该把线上状态压成 PENDING。
+    """
+    publication, approved, _skill_dir, _snapshot = _pair(tmp_path)
+    publication.status = "PUBLISHED"
+    personal_root = tmp_path / "personal"
+    _write_personal_skill(personal_root, "demo", body="\n# v2\n")
+    session = _FakeDbSession(
+        _FakeResult([publication]),  # 查已有谱系
+        _FakeResult([approved]),  # 查已有版本
+    )
+
+    with (
+        patch("app.services.skill_publication_service.settings", _settings(tmp_path)),
+        patch(
+            "app.services.skill_publication_service.get_user_personal_skills_dir",
+            return_value=str(personal_root),
+        ),
+        patch(
+            "app.services.skill_publication_service.notify_skill_publication_reviewers",
+            new_callable=AsyncMock,
+        ),
+    ):
+        payload = await submit_personal_skill(
+            session, user={"user_id": 7}, skill_id="demo"
+        )
+
+    assert publication.status == "PUBLISHED", "线上还有已发布版本时不能把汇总状态压成 PENDING"
+    assert payload["pending_version"] == 2
+    assert payload["current_public_version"] == 1
+
+
+def test_state_transitions_take_row_locks():
+    """★ 四个状态流转都要行锁：并发"通过/驳回/下架/撤销"不能再各自读到 PENDING 各写一半。
+
+    两位审核人同时点「通过」时，没有行锁就会双双物化（目录互相覆盖、版本状态互相覆盖），
+    最终库里写着谁也不知道的一版。锁在事务里，第二个请求重读后会拿到 409。
+    """
+    import ast
+    import inspect
+
+    from app.services import skill_publication_service as svc
+
+    expected = {
+        "approve_publication",
+        "reject_publication",
+        "revoke_published_version",
+        "withdraw_personal_skill_publication",
+    }
+    for name in expected:
+        source = inspect.getsource(getattr(svc, name))
+        tree = ast.parse(source)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "with_for_update"
+        ]
+        assert calls, f"{name} 缺少行锁（with_for_update）"

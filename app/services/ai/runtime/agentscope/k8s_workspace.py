@@ -943,21 +943,17 @@ async def read_k8s_sandbox_pod(
     }
 
 
-async def find_k8s_sandbox_pod_name(
+async def _list_sandbox_pod_entries(
     namespace: str,
     workspace_id_patterns: list[str],
-) -> str | None:
-    """按 AgentScope 的 Pod 标签反查该用户的沙箱 Pod 名。
+) -> list[tuple[bool, str]] | None:
+    """列出匹配的沙箱 Pod，返回 ``[(是否正在终止, pod 名), ...]``。
 
-    沙箱 Pod 名由 ``workspace_id`` 决定，而 ``workspace_id`` 现在带技能集合令牌
-    （物理沙箱与缓存条目一一对应），只读入口（状态/终端）又没有技能上下文，因此
-    不能再拼一个名字出来。AgentScope 给 Pod 打了
-    ``agentscope.workspace=true`` + ``agentscope.workspace.id=<workspace_id>``
-    两个标签，这里按标签列出 Pod 再用调用方给的正则/前缀候选匹配，命中即返回
-    真实的 Pod 名；查不到（或集群不可达）返回 ``None``，由调用方降级。
+    凭据/集群不可用、或 ``kubernetes_asyncio`` 缺失时返回 ``None``——与「集群正常但
+    没有 Pod」（空列表）区分开，调用方才能决定是降级还是判定"确实没有"。
     """
     if not workspace_id_patterns:
-        return None
+        return []
     try:
         from kubernetes_asyncio import client as k8s_client
         from kubernetes_asyncio import config as k8s_async_config
@@ -982,7 +978,7 @@ async def find_k8s_sandbox_pod_name(
             "[k8s_workspace] Failed to list sandbox pods in %s: %s", namespace, exc
         )
         return None
-    candidates: list[tuple[str, str]] = []
+    entries: list[tuple[bool, str]] = []
     for pod in getattr(pods, "items", None) or []:
         metadata = getattr(pod, "metadata", None)
         labels = getattr(metadata, "labels", None) or {}
@@ -990,17 +986,86 @@ async def find_k8s_sandbox_pod_name(
         pod_name = str(getattr(metadata, "name", "") or "")
         if not pod_name or not workspace_id:
             continue
-        for pattern in workspace_id_patterns:
-            if re.fullmatch(pattern, workspace_id):
-                # Terminating 的 Pod（deletionTimestamp 非空）优先度最低：
-                # 它即将消失，能选 Running 的就不要选它。
-                deleting = bool(getattr(metadata, "deletion_timestamp", None))
-                candidates.append(("1" if deleting else "0", pod_name))
-                break
-    if not candidates:
+        if any(re.fullmatch(pattern, workspace_id) for pattern in workspace_id_patterns):
+            # Terminating 的 Pod（deletionTimestamp 非空）单独标出来：它即将消失
+            entries.append((bool(getattr(metadata, "deletion_timestamp", None)), pod_name))
+    return entries
+
+
+async def find_k8s_sandbox_pod_names(
+    namespace: str,
+    workspace_id_patterns: list[str],
+) -> list[str]:
+    """:func:`find_k8s_sandbox_pod_name` 的多值版本：该用户在跑的**每一台**沙箱 Pod。
+
+    一个用户可能同时有多台沙箱（每技能集合一台，Pod 名带技能集合令牌）。停止/重启
+    沙箱必须按标签把这些真实存在的 Pod 全找出来——只遍历进程内缓存会在"进程重启过"
+    或"Pod 由别的副本创建"时回一个假的 ``stopped``（Pod 还在集群里跑）。正在终止的
+    Pod 排在后面，集群不可用时返回空列表（由调用方降级）。
+    """
+    entries = await _list_sandbox_pod_entries(namespace, workspace_id_patterns)
+    if not entries:
+        return []
+    ordered = sorted(entries, key=lambda item: item[0])
+    names: list[str] = []
+    for _deleting, pod_name in ordered:
+        if pod_name not in names:
+            names.append(pod_name)
+    return names
+
+
+async def delete_k8s_sandbox_pod(namespace: str, pod_name: str) -> bool:
+    """删除指定沙箱 Pod（幂等：已不存在按成功处理）；失败只记日志并返回 False。"""
+    if not pod_name:
+        return False
+    try:
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio import config as k8s_async_config
+    except ImportError:
+        return False
+    try:
+        k8s_async_config.load_incluster_config()
+    except Exception:
+        try:
+            await k8s_async_config.load_kube_config()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[k8s_workspace] 删除 Pod 时无法加载集群凭据: %s", exc)
+            return False
+    try:
+        async with k8s_client.ApiClient() as api_client:
+            core_v1 = k8s_client.CoreV1Api(api_client)
+            await core_v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "status", None) == 404:
+            return True
+        logger.warning(
+            "[k8s_workspace] Failed to delete sandbox pod %s in %s: %s",
+            pod_name,
+            namespace,
+            exc,
+        )
+        return False
+
+
+async def find_k8s_sandbox_pod_name(
+    namespace: str,
+    workspace_id_patterns: list[str],
+) -> str | None:
+    """按 AgentScope 的 Pod 标签反查该用户的沙箱 Pod 名。
+
+    沙箱 Pod 名由 ``workspace_id`` 决定，而 ``workspace_id`` 现在带技能集合令牌
+    （物理沙箱与缓存条目一一对应），只读入口（状态/终端）又没有技能上下文，因此
+    不能再拼一个名字出来。AgentScope 给 Pod 打了
+    ``agentscope.workspace=true`` + ``agentscope.workspace.id=<workspace_id>``
+    两个标签，这里按标签列出 Pod 再用调用方给的正则/前缀候选匹配，命中即返回
+    真实的 Pod 名；查不到（或集群不可达）返回 ``None``，由调用方降级。
+    """
+    if not workspace_id_patterns:
         return None
-    candidates.sort()
-    return candidates[0][1]
+    # 复用多值版本：Terminating 的 Pod 优先度最低（它即将消失，能选 Running 的就不选它）
+    names = await find_k8s_sandbox_pod_names(namespace, workspace_id_patterns)
+    return names[0] if names else None
 
 
 # 沙箱 Pod 内执行命令的容器名（k8s_workspace 创建 Pod 时使用）

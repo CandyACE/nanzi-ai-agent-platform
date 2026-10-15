@@ -228,6 +228,7 @@ async def rename_personal_skill(
             old_skill_id=skill_id,
             new_skill_id=new_skill_id,
             scope="personal",
+            actor=user,
         )
         return {
             "status": "success",

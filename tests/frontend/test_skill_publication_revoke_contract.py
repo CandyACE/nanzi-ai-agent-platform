@@ -80,7 +80,13 @@ def test_revoke_requires_confirmation_and_non_empty_reason():
 
     submit_body = _function_body("submitRevokePublication", "const openPublicationReviewDetail")
     # 第二步强制填写原因：空原因就地提示且**不关闭**弹窗（保持打开才能补填）
-    assert "const comment = revokeComment.value.trim()" in submit_body
+    # 必须以 InputModal 回传的载荷为准：只读本地 ref 曾经让这里永远读到空字符串，
+    # 于是「下架」100% 卡在提示上、接口一次都没发出去（InputModal 那时不派发输入值）。
+    assert "commentFromModal ?? revokeComment.value" in submit_body
+    assert 'commentFromModal?: string' in submit_body
+    assert '@confirm="submitRevokePublication"' in _source(), (
+        "confirm 载荷没接到提交函数上，收不到用户输入的原因"
+    )
     assert "请填写下架原因（必填）" in submit_body
     empty_check = submit_body.index("if (!comment) {")
     request_index = submit_body.index("axios.post(`/api/portal/skills/publications/")
@@ -165,3 +171,28 @@ def test_publications_prefetch_is_silent_and_click_does_not_leak_event():
     # 会把手动刷新也变成静默失败）
     assert '@click="fetchPublications()"' in source
     assert '@click="fetchPublications"' not in source
+
+
+def test_badge_shows_pending_new_version_while_online_version_stays_published():
+    """★ 已发布 + 又提交了一版待审时，徽章必须告诉作者"线上仍是旧版、新版在审"。
+
+    后端为这种谱系保持 ``publication_status=PUBLISHED``（否则管理员就下架不掉正在线上服务
+    的那一版），只有 ``pending_version`` 这个字段能表达"还有新版本在审"。若徽章只显示
+    「平台版 vN」，作者会以为自己刚提交的内容已经生效，管理员也看不出还有待审版本。
+    """
+    body = _function_body("publicationBadgeLabel", "\nconst publicationBadgeClass")
+    assert "skill.pending_version" in body, "徽章必须读取 pending_version"
+    assert "新版审核中" in body
+    # 仍要保留线上版本号
+    assert "current_public_version" in body
+
+
+def test_reference_sync_counts_agent_id_lists():
+    """★ `synced.agents` 是智能体 ID 列表，不是条数：必须按长度累加。
+
+    `Number(['a','b'])` 是 NaN → 此前被当成 0，于是真的同步了智能体白名单之后，
+    提示语反而显示"已同步 0 处引用"，用户以为什么都没改。
+    """
+    body = _function_body("summarizeReferenceSync", "\n/** 打开重命名弹窗")
+    assert "Array.isArray(value)" in body, "列表类要按长度计数"
+    assert "value.length" in body

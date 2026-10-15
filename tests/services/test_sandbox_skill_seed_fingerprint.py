@@ -56,10 +56,16 @@ async def test_fingerprint_changes_when_public_skill_edited(env):
 
 @pytest.mark.asyncio
 async def test_fingerprint_changes_when_skill_disabled(env):
-    """★ 核心回归：禁用是改权限、不动文件，旧指纹察觉不到。"""
-    before = await _fp(env)
-    after = await _fp(env, forbidden=["pub-a"])
-    assert before != after, "禁用集合变化必须改变 seed 指纹，否则沙箱永远留着已禁用技能"
+    """★ 核心回归：禁用是改权限、不动文件，旧指纹察觉不到。
+
+    禁用（权限集合 / 管理端 ``enabled: false``）都会改变
+    :func:`discover_platform_skill_paths` 的输出，于是技能集合令牌变、指纹变。
+    指纹里**刻意不再**单独塞一份禁用集合——那会引入第二个真相来源（创建侧拿不到身份
+    上下文时是空集），实测会让「预热过的沙箱」每次对话都被逐出重建。
+    """
+    before = await _fp(env, paths=[str(env["public"] / "pub-a")])
+    after = await _fp(env, paths=[])  # 该技能被禁用后不再出现在 skill_paths 里
+    assert before != after, "禁用必须改变 seed 指纹，否则沙箱永远留着已禁用技能"
 
 
 @pytest.mark.asyncio
@@ -97,7 +103,7 @@ async def test_disable_event_actually_invalidates_seed(env):
     assert invalidated is False
     assert seed.is_dir()
 
-    changed = await _fp(env, forbidden=["pub-a"])
+    changed = await _fp(env, paths=[str(env["public"] / "pub-b")])
     invalidated, committed = ws._invalidate_stale_sandbox_skill_seed(
         env["workdir"], changed
     )
@@ -107,16 +113,22 @@ async def test_disable_event_actually_invalidates_seed(env):
 
 
 @pytest.mark.asyncio
-async def test_forbidden_lookup_failure_degrades_without_raising(env):
-    """权限服务抖动时不能连累技能链路：退化为不含权限的指纹并告警。"""
-    with patch.object(
-        ws, "_platform_public_skills_fingerprint", lambda: "public-fp"
-    ), patch(
+async def test_fingerprint_does_not_query_permissions(env):
+    """★ 指纹不得自己再查一次权限集合：那是第二个真相来源。
+
+    「建沙箱用的集合」与「比指纹用的集合」各查一次权限，就会在「创建侧没有用户身份
+    上下文」（沙箱预热接口）或「一侧权限服务抖动（fail-open 返回空集）」时算出两个
+    不同的指纹——实测 3 轮对话建 3 台容器。技能集合令牌已经覆盖权限变更，所以这里
+    **断言指纹函数根本不碰权限服务**。
+    """
+    with patch(
         "app.services.ai.skills.policy.get_forbidden_skill_ids",
-        AsyncMock(side_effect=RuntimeError("permission service down")),
+        AsyncMock(side_effect=AssertionError("seed 指纹不应查询权限集合")),
     ):
-        fingerprint = await ws._sandbox_skills_seed_fingerprint(env["workdir"])
-    assert fingerprint, "读不到禁用集合也要给出指纹，而不是让容器初始化失败"
+        fingerprint = await ws._sandbox_skills_seed_fingerprint(
+            env["workdir"], [str(env["public"] / "pub-a")]
+        )
+    assert fingerprint
 
 
 # ---------------------------------------------------------------------------
@@ -227,19 +239,16 @@ def test_invalidate_records_manifest_before_deleting_seed(env):
 
 
 @pytest.mark.asyncio
-async def _fp(env, forbidden=()):
-    with (
-        patch.object(
-            ws,
-            "_platform_public_skills_fingerprint",
-            lambda: ws._dir_tree_fingerprint(str(env["public"])),
-        ),
-        patch(
-            "app.services.ai.skills.policy.get_forbidden_skill_ids",
-            AsyncMock(return_value=set(forbidden)),
-        ),
+async def _fp(env, paths=None):
+    """算一次 seed 指纹；``paths`` 缺省为「只装 pub-a」这一稳定技能集合。"""
+    if paths is None:
+        paths = [str(env["public"] / "pub-a")]
+    with patch.object(
+        ws,
+        "_platform_public_skills_fingerprint",
+        lambda: ws._dir_tree_fingerprint(str(env["public"])),
     ):
-        return await ws._sandbox_skills_seed_fingerprint(env["workdir"])
+        return await ws._sandbox_skills_seed_fingerprint(env["workdir"], paths)
 
 
 # ---------------------------------------------------------------------------
@@ -998,18 +1007,23 @@ async def test_snapshot_current_detects_skill_set_change(env):
 
         # 令牌没变、内容也没变 → 仍是最新
         assert await ws._sandbox_skills_snapshot_is_current(
-            key, skill_paths=[str(env["public"] / "pub-a")], forbidden_skill_ids=set()
+            key, skill_paths=[str(env["public"] / "pub-a")]
         )
         # 该智能体的技能集合变成另一个 → 过期
         assert not await ws._sandbox_skills_snapshot_is_current(
-            key, skill_paths=[str(env["public"] / "pub-a"), str(env["public"] / "pub-b")],
-            forbidden_skill_ids=set(),
+            key,
+            skill_paths=[str(env["public"] / "pub-a"), str(env["public"] / "pub-b")],
         )
 
 
 @pytest.mark.asyncio
-async def test_snapshot_current_detects_permission_change_with_same_layout(env):
-    """★ 核心回归：令牌没变但禁用集合变了，老沙箱也必须判为过期。"""
+async def test_snapshot_current_detects_public_content_change_with_same_layout(env):
+    """★ 核心回归：令牌没变但公共库内容变了，老沙箱也必须判为过期。
+
+    权限变更走的是令牌那条路（见
+    :func:`test_permission_and_frontmatter_disable_both_change_skill_set_token`），
+    「令牌相同」时还需要失效的只剩「文件内容变了」这一类。
+    """
     host_workdir = env["workdir"]
     paths = [str(env["public"] / "pub-a")]
     layout = ws._skill_paths_cache_token(paths)
@@ -1021,17 +1035,13 @@ async def test_snapshot_current_detects_permission_change_with_same_layout(env):
         seed_dir = Path(ws._sandbox_skills_dir(host_workdir, layout)) / ws.SANDBOX_SKILL_SEED_DIR_NAME
         seed_dir.mkdir(parents=True, exist_ok=True)
         (seed_dir / "dummy").write_text("x", encoding="utf-8")
-        built_fp = await ws._sandbox_skills_seed_fingerprint(
-            host_workdir, paths, layout, forbidden_skill_ids=set()
-        )
+        built_fp = await ws._sandbox_skills_seed_fingerprint(host_workdir, paths, layout)
         ws._write_sandbox_skills_fingerprint(host_workdir, built_fp, layout)
 
-        assert await ws._sandbox_skills_snapshot_is_current(
-            key, skill_paths=paths, forbidden_skill_ids=set()
-        )
-        assert not await ws._sandbox_skills_snapshot_is_current(
-            key, skill_paths=paths, forbidden_skill_ids={"pub-a"}
-        )
+        assert await ws._sandbox_skills_snapshot_is_current(key, skill_paths=paths)
+        # 公共技能内容改了（令牌没变）→ 必须判过期
+        _write_skill(env["public"], "pub-a", body="changed-after-build")
+        assert not await ws._sandbox_skills_snapshot_is_current(key, skill_paths=paths)
 
 
 @pytest.mark.asyncio
@@ -1041,20 +1051,14 @@ async def test_snapshot_current_is_optimistic_when_unknown(env):
     root = str(Path(env["workdir"]).parent)
     key = ws._docker_workspace_cache_key(root, "u__1", paths)
     # 没有指纹文件
-    assert await ws._sandbox_skills_snapshot_is_current(
-        key, skill_paths=paths, forbidden_skill_ids=set()
-    )
+    assert await ws._sandbox_skills_snapshot_is_current(key, skill_paths=paths)
     # 公共技能库指纹不可用（返回 None）
     layout = ws._skill_paths_cache_token(paths)
     with patch.object(ws, "_platform_public_skills_fingerprint", lambda: None):
         ws._write_sandbox_skills_fingerprint(env["workdir"], "deadbeef", layout)
-        assert await ws._sandbox_skills_snapshot_is_current(
-            key, skill_paths=paths, forbidden_skill_ids=set()
-        )
+        assert await ws._sandbox_skills_snapshot_is_current(key, skill_paths=paths)
     # 非法键（测试替身）一律放行
-    assert await ws._sandbox_skills_snapshot_is_current(
-        "fake_cache_key", skill_paths=paths, forbidden_skill_ids=set()
-    )
+    assert await ws._sandbox_skills_snapshot_is_current("fake_cache_key", skill_paths=paths)
 
 
 @pytest.mark.asyncio
@@ -1321,3 +1325,362 @@ def test_sandbox_skills_dir_is_disposable_matches_partition_sync_criteria(tmp_pa
     # 顶层出现非目录条目 → 不可判定，保留
     (skills_dir / "stray.txt").write_text("x", encoding="utf-8")
     assert not ws._sandbox_skills_dir_is_disposable(host_workdir, layout)
+
+
+# ---------------------------------------------------------------------------
+# 审查回归（第四轮 review）：不变式 / DooD 路径 / GC 判据 / 会话快照清理
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_permission_and_frontmatter_disable_both_change_skill_set_token(env, monkeypatch):
+    """★ 不变式：两种「禁用」都必须改变技能集合令牌（指纹里的禁用维度因此是冗余的）。
+
+    指纹刻意不含禁用集合，安全性完全押在「禁用会改变 ``skill_paths`` → 令牌变」这条
+    不变式上。这里把两条渠道都钉住：① 权限禁用集合；② 管理端 ``enabled: false``
+    （只改 frontmatter，不进权限集合）。
+    """
+    # SKILLS_DIR 是 config.Settings 上的 property：既不能 setattr，也不能 model_copy，
+    # 只能在类上替换属性本身（monkeypatch 事后还原）。
+    from app.core.config import settings as _settings
+
+    monkeypatch.setattr(
+        type(_settings), "SKILLS_DIR", property(lambda self: str(env["public"]))
+    )
+    baseline = ws._skill_paths_cache_token(ws.discover_platform_skill_paths(user_info=None))
+    assert baseline != "noskills"
+
+    forbidden = ws.discover_platform_skill_paths(
+        user_info=None, forbidden_skill_ids=["pub-a"]
+    )
+    assert ws._skill_paths_cache_token(forbidden) != baseline, "权限禁用必须改变令牌"
+
+    (env["public"] / "pub-a" / "SKILL.md").write_text(
+        "---\nname: pub-a\ndescription: d\nenabled: false\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    disabled = ws.discover_platform_skill_paths(user_info=None)
+    assert ws._skill_paths_cache_token(disabled) != baseline, (
+        "管理端 enabled=false 必须改变令牌，否则禁用后沙箱身份不变"
+    )
+
+
+@pytest.mark.asyncio
+async def test_snapshot_check_reads_fingerprint_from_docker_host_path(env, monkeypatch, tmp_path):
+    """★ DooD 回归：核对必须读**宿主路径**上的指纹。
+
+    平台跑在容器里（官方 docker 部署设置了 ``HOST_DATA_DIR``）时，创建侧把技能目录与
+    指纹写在映射后的宿主物理路径上；核对侧若用容器内路径，读到的是「创建侧从不写的
+    那棵树」→ ``recorded`` 恒空 → 永远判「最新」→ 整套权限治理静默失效。
+    """
+    monkeypatch.delenv("HOST_DATA_DIR", raising=False)
+    monkeypatch.delenv("AGENTSCOPE_WORKSPACE_HOST_ROOT", raising=False)
+    root = "/app/data/agent_workspaces"
+    user_key = "u__1"
+    host_root = tmp_path / "host_data"
+    monkeypatch.setattr(
+        ws,
+        "_resolve_docker_sandbox_host_workdir",
+        lambda workspace_root, sandbox_user_key: str(Path(host_root) / str(sandbox_user_key)),
+    )
+    assert ws._sandbox_skills_host_workdir(root, user_key, "docker") == str(host_root / user_key)
+    # K8s 走 PVC 内的容器路径，不做宿主映射
+    assert ws._sandbox_skills_host_workdir(root, user_key, "k8s") == os.path.join(root, user_key)
+
+    paths = [str(env["public"] / "pub-a")]
+    layout = ws._skill_paths_cache_token(paths)
+    key = f"{root}::{user_key}::{layout}::docker"
+    host_workdir = str(host_root / user_key)
+    seed_dir = Path(ws._sandbox_skills_dir(host_workdir, layout)) / ws.SANDBOX_SKILL_SEED_DIR_NAME
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    with patch.object(
+        ws,
+        "_platform_public_skills_fingerprint",
+        lambda: ws._dir_tree_fingerprint(str(env["public"])),
+    ):
+        current = await ws._sandbox_skills_seed_fingerprint(host_workdir, paths, layout)
+        ws._write_sandbox_skills_fingerprint(host_workdir, current, layout)
+        assert await ws._sandbox_skills_snapshot_is_current(key, skill_paths=paths)
+        # 宿主路径上的指纹与当前不一致 → 必须判过期（旧实现会因为读不到而判「最新」）
+        ws._write_sandbox_skills_fingerprint(host_workdir, "stale-fingerprint", layout)
+        assert not await ws._sandbox_skills_snapshot_is_current(key, skill_paths=paths)
+
+
+def test_gc_keeps_agent_skill_named_like_public_skill(tmp_path, monkeypatch):
+    """★ GC 判据只认「当前 seed ∪ 账本」：与公共技能同名的自建技能绝不能被回收。
+
+    旧判据把「名字落在公共技能名单里」当成平台可再生内容，于是 agent 自建的同名技能
+    （公共技能不在它白名单里时特别容易同名）会被当残留，连同整个技能集合目录被
+    ``rmtree``——那是不可再生的用户数据。
+    """
+    monkeypatch.delenv("HOST_DATA_DIR", raising=False)
+    monkeypatch.delenv("AGENTSCOPE_WORKSPACE_HOST_ROOT", raising=False)
+    workspace_parent = tmp_path / "agent_workspaces"
+    host_workdir = str(workspace_parent / "u1")
+    layout = "aaaa"
+    skills_dir = Path(ws._sandbox_skills_dir(host_workdir, layout))
+    _write_skill(skills_dir / ws.SANDBOX_SKILL_SEED_DIR_NAME, "pub-visible")
+    _write_skill(skills_dir / "default", "pub-visible")
+    # 与另一个公共技能同名，但它既不在当前 seed、也不在账本里 → 视为 agent 自建
+    _write_skill(skills_dir / "default", "pub-not-mine")
+    ws._write_sandbox_skill_manifest(host_workdir, ["pub-visible"], layout)
+    monkeypatch.setattr(
+        ws, "_public_skill_directory_names", lambda: {"pub-visible", "pub-not-mine"}
+    )
+
+    assert ws._sandbox_skills_dir_is_disposable(host_workdir, layout) is False
+
+    old = time.time() - ws.SANDBOX_SKILLS_DIR_MIN_AGE_SECONDS - 10
+    os.utime(skills_dir, (old, old))
+    ws._docker_workspace_cache.clear()
+    ws._k8s_workspace_cache.clear()
+    try:
+        key = f"{workspace_parent}::u1::{layout}::docker"
+        assert ws.collect_orphan_sandbox_skills_dir(key) is None
+    finally:
+        ws._docker_workspace_cache.clear()
+        ws._k8s_workspace_cache.clear()
+    assert (skills_dir / "default" / "pub-not-mine").is_dir(), "自建技能不能被回收"
+
+    # 对照：把那条自建技能移走后，同一目录仍可回收（不能因为保守而永不回收）
+    import shutil as _shutil
+
+    _shutil.rmtree(skills_dir / "default" / "pub-not-mine")
+    assert ws._sandbox_skills_dir_is_disposable(host_workdir, layout) is True
+
+
+def test_sync_with_manifest_does_not_fall_back_to_public_names(env):
+    """账本存在时以账本为权威：同名条目不在账本、也不在新 seed → 保留（可能是自建技能）。"""
+    skills_dir, seed = _seed_with(env, ["pub-a"])
+    partition = skills_dir / "default"
+    _write_skill(partition, "pub-a")
+    _write_skill(partition, "agent-made-same-name")
+    ws._write_sandbox_skill_manifest(env["workdir"], ["pub-a"])
+
+    with patch.object(
+        ws, "_public_skill_directory_names", lambda: {"pub-a", "agent-made-same-name"}
+    ):
+        ws._sync_public_skills_into_sandbox_partitions(env["workdir"])
+
+    assert (partition / "agent-made-same-name").is_dir(), "有账本时不能用公共名单兜底删同名条目"
+
+
+def test_prune_stale_session_skills_prunes_by_id_even_when_content_changed(tmp_path):
+    """★ 核心回归：技能内容改过之后才禁用，也必须清掉。
+
+    旧判据要求「账本里的哈希 == 该技能**当前**文件的哈希」，而账本记的是**播种当时**的
+    哈希：内容一变两侧永远对不上，被禁技能的会话副本会永久留在磁盘上（Read/Glob 可读）。
+    """
+    seed_dir = tmp_path / "skills" / ".seed"
+    _write_skill(seed_dir, "gamma-dir")
+    index = tmp_path / ".session_skills.json"
+    index.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "gamma-dir": {
+                        "hash": "hash-at-seeding-time",
+                        "skill_name": "gamma",
+                        "skill_id": "gamma",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    removed = ws._prune_stale_session_skills(
+        str(seed_dir), str(index), set(), {"gamma"}
+    )
+
+    assert removed == 1, "按来源 id 判定时不需要内容哈希命中"
+    assert not (seed_dir / "gamma-dir").exists()
+    assert json.loads(index.read_text(encoding="utf-8"))["skills"] == {}
+
+
+def test_prune_stale_session_skills_keeps_same_id_personal_copy(tmp_path):
+    """同 id 的个人副本必须留下：禁的是平台发布的那一份。"""
+    seed_dir = tmp_path / "skills" / ".seed"
+    _write_skill(seed_dir, "platform-copy")
+    _write_skill(seed_dir, "personal-copy")
+    index = tmp_path / ".session_skills.json"
+    index.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "platform-copy": {"hash": "platform-old", "skill_id": "gamma"},
+                    "personal-copy": {"hash": "personal-hash", "skill_id": "gamma"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    removed = ws._prune_stale_session_skills(
+        str(seed_dir),
+        str(index),
+        set(),
+        {"gamma"},
+        personal_hashes={"gamma": {"personal-hash"}},
+    )
+
+    assert removed == 1
+    assert (seed_dir / "personal-copy").is_dir(), "同名个人技能不能被连坐删除"
+    assert not (seed_dir / "platform-copy").exists()
+
+
+def test_prune_stale_session_skills_legacy_entry_still_needs_hash(tmp_path):
+    """老账本没有 skill_id：只能退回内容哈希判定（行为不能比改动前更激进）。"""
+    seed_dir = tmp_path / "skills" / ".seed"
+    _write_skill(seed_dir, "legacy-keep")
+    _write_skill(seed_dir, "legacy-drop")
+    index = tmp_path / ".session_skills.json"
+    index.write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "legacy-keep": {"hash": "other-hash"},
+                    "legacy-drop": {"hash": "forbidden-hash"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    removed = ws._prune_stale_session_skills(
+        str(seed_dir), str(index), {"forbidden-hash"}, {"gamma"}
+    )
+
+    assert removed == 1
+    assert (seed_dir / "legacy-keep").is_dir()
+    assert not (seed_dir / "legacy-drop").exists()
+
+
+@pytest.mark.asyncio
+async def test_prune_forbidden_session_skills_covers_frontmatter_disable(env, monkeypatch):
+    """★ 缓存命中路径也要清「管理端禁用」的会话副本（原先只看权限集合，完全漏掉）。"""
+    # SKILLS_DIR 是 config.Settings 上的 property：既不能 setattr，也不能 model_copy，
+    # 只能在类上替换属性本身（monkeypatch 事后还原）。
+    from app.core.config import settings as _settings
+
+    monkeypatch.setattr(
+        type(_settings), "SKILLS_DIR", property(lambda self: str(env["public"]))
+    )
+    (env["public"] / "pub-a" / "SKILL.md").write_text(
+        "---\nname: pub-a\ndescription: d\nenabled: false\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    seed_dir = Path(ws._session_skill_seed_dir(env["workdir"]))
+    _write_skill(seed_dir, "pub-a")
+    index = Path(ws._session_skills_ledger_path(env["workdir"]))
+    index.write_text(
+        json.dumps({"skills": {"pub-a": {"hash": "h", "skill_id": "pub-a"}}}),
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.services.ai.skills.policy.get_forbidden_skill_ids",
+        AsyncMock(return_value=set()),
+    ):
+        await ws._prune_forbidden_session_skills(env["workdir"], None)
+
+    assert not (seed_dir / "pub-a").exists(), "管理端禁用后会话副本必须消失"
+    assert json.loads(index.read_text(encoding="utf-8"))["skills"] == {}
+
+
+def test_cache_hit_prunes_session_skills_whose_source_disappeared(env, monkeypatch):
+    """★ 缓存命中路径也要清「来源已删除」的技能（原先只有播种路径会清 → 永久残留）。"""
+    # SKILLS_DIR 是 config.Settings 上的 property：既不能 setattr，也不能 model_copy，
+    # 只能在类上替换属性本身（monkeypatch 事后还原）。
+    from app.core.config import settings as _settings
+
+    monkeypatch.setattr(
+        type(_settings), "SKILLS_DIR", property(lambda self: str(env["public"]))
+    )
+    seed_dir = Path(ws._session_skill_seed_dir(env["workdir"]))
+    _write_skill(seed_dir, "pub-a")
+    _write_skill(seed_dir, "gone")
+    index = Path(ws._session_skills_ledger_path(env["workdir"]))
+    index.write_text(
+        json.dumps(
+            {
+                "skills_dir_mtime": 0.0,
+                "skills": {
+                    "pub-a": {"hash": "h1", "skill_id": "pub-a"},
+                    "gone": {"hash": "h2", "skill_id": "gone"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    removed = ws._prune_removed_session_skills_from_ledger(
+        env["workdir"], str(index), None
+    )
+
+    assert removed == 1
+    assert (seed_dir / "pub-a").is_dir()
+    assert not (seed_dir / "gone").exists(), "源目录已消失的副本必须清掉"
+    data = json.loads(index.read_text(encoding="utf-8"))
+    assert set(data["skills"]) == {"pub-a"}
+    assert data["skills_dir_mtime"] == 0.0, "写回账本不能丢掉其它字段"
+
+
+@pytest.mark.asyncio
+async def test_conversation_stale_skills_snapshot_three_way(env, monkeypatch, tmp_path):
+    """只读入口核对的三态：集合没变→放行；变了→报过期；查不到记录→放行（判不了不挡人）。"""
+    root = str(tmp_path)
+    user_key = "u__1"
+    conversation_id = "conv-1"
+    workdir = ws._conversation_workdir(root, user_key, conversation_id)
+    current_paths = [str(env["public"] / "pub-a")]
+    monkeypatch.setattr(
+        ws, "discover_platform_skill_paths", lambda **kwargs: list(current_paths)
+    )
+    monkeypatch.setattr(
+        "app.services.ai.skills.policy.get_forbidden_skill_ids",
+        AsyncMock(return_value=set()),
+    )
+
+    async def _call():
+        return await ws._conversation_stale_skills_snapshot(
+            root=root,
+            user_key=user_key,
+            conversation_id=conversation_id,
+            policy=ws.SANDBOX_POLICY_DOCKER,
+            user_info=None,
+        )
+
+    # 查不到会话记录 → 放行（进程刚重启时不能把用户挡在终端外）
+    assert await _call() is None
+
+    # 沙箱当时用的集合与当前一致 → 放行
+    layout = ws._skill_paths_cache_token(current_paths)
+    fresh_key = f"{root}::{user_key}::{layout}::docker"
+    monkeypatch.setitem(
+        ws._workspace_sandbox_refs, f"{workdir}::all::docker", fresh_key
+    )
+    assert await _call() is None
+
+    # 技能集合变了（禁用/白名单调整）→ 报过期并给出沙箱键
+    stale_layout = ws._skill_paths_cache_token(current_paths + ["/skills/gone"])
+    stale_key = f"{root}::{user_key}::{stale_layout}::docker"
+    monkeypatch.setitem(
+        ws._workspace_sandbox_refs, f"{workdir}::all::docker", stale_key
+    )
+    stale = await _call()
+    assert stale is not None
+    assert stale[0] == stale_key
+    assert stale[1] == current_paths
+
+    # 白名单形态（custom:<列表>）也要能从缓存键恢复
+    monkeypatch.delitem(ws._workspace_sandbox_refs, f"{workdir}::all::docker", raising=False)
+    monkeypatch.setattr(
+        ws,
+        "discover_platform_skill_paths",
+        lambda **kwargs: list(current_paths) if kwargs.get("skills_custom") else [],
+    )
+    monkeypatch.setitem(
+        ws._workspace_sandbox_refs, f"{workdir}::custom:pub-a::docker", fresh_key
+    )
+    assert await _call() is None

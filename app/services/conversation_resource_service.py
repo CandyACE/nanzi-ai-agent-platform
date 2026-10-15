@@ -171,6 +171,7 @@ class ConversationResourceService:
         scope: str | None = None,
         max_sessions: int = MAX_MOUNT_REWRITE,
         strict_unavailable: bool = False,
+        owner_id: Any | None = None,
     ) -> int:
         """批量改写（``new_skill_id`` 非空）或移除（``None``）各会话挂载的技能，返回改动数。
 
@@ -182,6 +183,13 @@ class ConversationResourceService:
         主操作（目录已改名/已删除）早已完成。唯一例外是 ``strict_unavailable=True`` 时
         Redis 整体不可用会抛 :class:`MountSyncUnavailable`，让删除/下架链路能把「这一处
         没同步」写进 warnings，而不是混在「改了 0 个会话」里静默消失。
+
+        ``owner_id`` 把扫描范围收窄到**该用户自己的会话键**（``conversation:<user_id>:*``）。
+        个人技能的重命名/删除**必须**带它：技能 id 就是目录名，用户 A 完全可以建一个 id
+        恰好等于某个公共技能的个人技能（平台允许同名），而历史挂载项没有 ``scope`` 字段时
+        :meth:`_mount_scope_matches` 会判为"匹配"，于是 A 的操作会删改 **B 会话里**的挂载项
+        （跨用户写会话资源）。平台技能（``scope="global"``）的重命名/下架则**必须**扫全库：
+        那是平台内容，所有用户的挂载都要跟着改。
         """
         old_id = str(skill_id or "").strip()
         if not old_id:
@@ -202,7 +210,19 @@ class ConversationResourceService:
                 raise MountSyncUnavailable("Redis 客户端不可用")
             return 0
 
-        pattern = f"{cls.KEY_PREFIX}:*:*:{cls.SUFFIX}"
+        if owner_id is not None:
+            # user_id 段必须与 _key() 完全同构，否则会漏扫或扫到别人
+            try:
+                owner_segment = require_user_id(owner_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[ConversationResource] 无法确定挂载同步的用户边界，跳过以免误改他人会话: %s",
+                    exc,
+                )
+                return 0
+            pattern = f"{cls.KEY_PREFIX}:{owner_segment}:*:{cls.SUFFIX}"
+        else:
+            pattern = f"{cls.KEY_PREFIX}:*:*:{cls.SUFFIX}"
         updated = 0
         cursor = 0
         try:

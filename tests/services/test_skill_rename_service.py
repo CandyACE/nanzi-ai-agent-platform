@@ -489,7 +489,10 @@ async def test_remove_skill_references_cleans_all_three_places(monkeypatch):
 
     assert report["synced"] == {"agents": ["agent-1"], "publications": 1, "conversations": 2}
     assert report["warnings"] == []
-    mounts.assert_awaited_once_with(skill_id="public-demo-12345678", scope="global")
+    # 平台技能必须扫全库，因此**不能**带用户边界（owner_id=None）
+    mounts.assert_awaited_once_with(
+        skill_id="public-demo-12345678", scope="global", owner_id=None
+    )
 
 
 @pytest.mark.asyncio
@@ -528,3 +531,148 @@ async def test_remove_skill_references_personal_warns_about_live_platform_copy(m
     )
 
     assert any("public-demo-12345678" in item for item in report["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# 审查回归（第四轮 review）：改名必须同步「禁用技能」权限行
+# ---------------------------------------------------------------------------
+
+
+class _RowcountSession:
+    """记录 update 语句并给出 rowcount 的最简会话替身。"""
+
+    def __init__(self, rowcount: int = 1):
+        self._rowcount = rowcount
+        self.statements = []
+        self.commits = 0
+
+    async def execute(self, statement, *_args, **_kwargs):
+        self.statements.append(statement)
+        return _RowcountResult(self._rowcount)
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _RowcountResult:
+    def __init__(self, rowcount: int):
+        self.rowcount = rowcount
+
+
+@pytest.mark.asyncio
+async def test_sync_forbidden_skill_permissions_rewrites_id():
+    """★ 平台技能改名必须把 ``forbidden_skill`` 权限行的 resource_id 一起改。
+
+    不改就是**权限旁路**：管理员禁用了某平台技能，把它改个名字，禁用规则静默失配，
+    同一个技能换个 ID 立刻对所有人重新可用（fail-open），运行时的 ``skill_paths``
+    与令牌也随之把它当作可用技能。
+    """
+    session = _RowcountSession(rowcount=3)
+
+    changed = await svc.sync_forbidden_skill_permissions(
+        session, old_skill_id="public-demo-12345678", new_skill_id="public-demo-abcdef01"
+    )
+
+    assert changed == 3
+    assert session.commits == 1, "改完要落库"
+    assert len(session.statements) == 1
+    statement = session.statements[0]
+    assert statement.table.name == "ai_agent_resource_permissions"
+    sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "forbidden_skill" in sql
+    assert "public-demo-12345678" in sql and "public-demo-abcdef01" in sql
+
+
+@pytest.mark.asyncio
+async def test_sync_forbidden_skill_permissions_is_quiet_when_nothing_to_change():
+    """没有匹配行时不要空提交（改名主流程还要继续做别的同步）。"""
+    session = _RowcountSession(rowcount=0)
+
+    changed = await svc.sync_forbidden_skill_permissions(
+        session, old_skill_id="public-demo-12345678", new_skill_id="public-demo-abcdef01"
+    )
+
+    assert changed == 0
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_rename_skill_reports_permission_sync(skill_tree, monkeypatch):
+    """平台技能改名把权限行同步结果回报给调用方；失败也要如实警告而不是静默成功。"""
+    calls = []
+
+    async def fake_sync(session, *, old_skill_id, new_skill_id):
+        calls.append((old_skill_id, new_skill_id))
+        return 2
+
+    monkeypatch.setattr(svc, "sync_agent_bindings", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "sync_publication_lineage", AsyncMock(return_value=0))
+    monkeypatch.setattr(svc, "sync_forbidden_skill_permissions", fake_sync)
+    monkeypatch.setattr(
+        "app.services.skill_rename_service.ConversationResourceService.rewrite_skill_mounts",
+        AsyncMock(return_value=0),
+    )
+
+    report = await svc.rename_skill(
+        AsyncMock(),
+        current_dir=str(skill_tree / "old-skill"),
+        old_skill_id="old-skill",
+        new_skill_id="new-skill",
+        scope="global",
+    )
+
+    assert calls == [("old-skill", "new-skill")]
+    assert report["synced"]["permissions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_rename_skill_warns_when_permission_sync_fails(skill_tree, monkeypatch):
+    """权限行没同步必须出现在 warnings 里：这是权限旁路，不能混在"改了 0 个"里消失。"""
+    monkeypatch.setattr(svc, "sync_agent_bindings", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "sync_publication_lineage", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        svc,
+        "sync_forbidden_skill_permissions",
+        AsyncMock(side_effect=RuntimeError("db down")),
+    )
+    monkeypatch.setattr(
+        "app.services.skill_rename_service.ConversationResourceService.rewrite_skill_mounts",
+        AsyncMock(return_value=0),
+    )
+
+    report = await svc.rename_skill(
+        AsyncMock(),
+        current_dir=str(skill_tree / "old-skill"),
+        old_skill_id="old-skill",
+        new_skill_id="new-skill",
+        scope="global",
+    )
+
+    assert any("禁用技能" in warning for warning in report["warnings"])
+    assert (skill_tree / "new-skill" / "SKILL.md").is_file(), "主操作（改名）不回滚"
+
+
+@pytest.mark.asyncio
+async def test_personal_rename_does_not_touch_global_forbidden_rows(skill_tree, monkeypatch):
+    """个人技能改名不碰权限表：那会跨用户改到别人禁用的同名技能配置。"""
+    called = []
+    monkeypatch.setattr(svc, "sync_publication_lineage", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        svc,
+        "sync_forbidden_skill_permissions",
+        AsyncMock(side_effect=lambda *a, **k: called.append(1)),
+    )
+    monkeypatch.setattr(
+        "app.services.skill_rename_service.ConversationResourceService.rewrite_skill_mounts",
+        AsyncMock(return_value=0),
+    )
+
+    await svc.rename_skill(
+        AsyncMock(),
+        current_dir=str(skill_tree / "old-skill"),
+        old_skill_id="old-skill",
+        new_skill_id="new-skill",
+        scope="personal",
+    )
+
+    assert called == []

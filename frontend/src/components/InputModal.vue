@@ -103,6 +103,7 @@ onUnmounted(() => {
             :placeholder="placeholder"
             :maxlength="maxlength"
             class="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            @input="emit('update:modelValue', draft)"
           />
           <p v-if="hint" class="mt-2 text-xs text-gray-400 dark:text-gray-500">{{ hint }}</p>
         </form>

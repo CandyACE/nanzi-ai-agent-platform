@@ -83,3 +83,126 @@ async def test_get_many_uses_one_redis_mget_for_history_scopes():
     ])
     assert scopes["conv-1"]["project_name"] == "p1"
     assert scopes["conv-2"]["datasets"] == []
+
+
+class _FakeScanRedis:
+    """极小的 Redis 替身：只实现 rewrite_skill_mounts 用到的 scan/get/set。"""
+
+    def __init__(self, store):
+        self.store = dict(store)
+        self.scanned_patterns = []
+        self.sets = []
+
+    async def scan(self, cursor=0, match=None, count=200):
+        self.scanned_patterns.append(match)
+        # 按 Redis 语义过滤：模式里带 owner 就必须真的少扫到别人的 key
+        from fnmatch import fnmatch
+
+        return 0, [key for key in self.store if match is None or fnmatch(key, match)]
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def set(self, key, value, ex=None):
+        self.sets.append((key, value, ex))
+        self.store[key] = value
+
+
+@pytest.mark.asyncio
+async def test_rewrite_skill_mounts_owner_scope_never_touches_other_users():
+    """★ 个人技能的重命名/删除绝不能改到别人的会话挂载。
+
+    技能 ID 就是目录名：用户 A 完全可以建一个 id 恰好叫 ``pdf`` 的个人技能（平台允许与
+    公共技能同名），而历史挂载项没有 ``scope`` 字段时会被判为「匹配」。扫描原先不带 owner
+    过滤，于是 A 的删除会顺手动到 **B 会话**里的同名挂载（跨用户写会话资源）。
+    """
+    import json
+
+    mine = "conversation:7:conv-a:resource_scope_v1"
+    other = "conversation:8:conv-b:resource_scope_v1"
+    redis = _FakeScanRedis(
+        {
+            mine: json.dumps({"skills": [{"id": "pdf", "scope": "personal"}]}),
+            other: json.dumps({"skills": [{"id": "pdf"}]}),  # B 的老挂载：没有 scope 字段
+        }
+    )
+    with patch(
+        "app.services.conversation_resource_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        updated = await ConversationResourceService.rewrite_skill_mounts(
+            skill_id="pdf", new_skill_id=None, scope="personal", owner_id=7
+        )
+
+    assert updated == 1
+    assert redis.scanned_patterns == ["conversation:7:*:resource_scope_v1"]
+    assert [key for key, _value, _ex in redis.sets] == [mine]
+    assert json.loads(redis.store[mine])["skills"] == []
+    assert json.loads(redis.store[other])["skills"] == [{"id": "pdf"}], "别人的挂载不能被改"
+    # 写回必须带 TTL（历史 bug：重命名链路把 30 天写成了永久键）
+    assert redis.sets[0][2] == TTL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_rewrite_skill_mounts_without_owner_still_scans_everyone():
+    """平台技能（global）的重命名/下架必须扫全库：所有用户的挂载都要跟着改。"""
+    import json
+
+    mine = "conversation:7:conv-a:resource_scope_v1"
+    other = "conversation:8:conv-b:resource_scope_v1"
+    redis = _FakeScanRedis(
+        {
+            mine: json.dumps({"skills": [{"id": "pdf"}]}),
+            other: json.dumps({"skills": [{"id": "pdf"}]}),
+        }
+    )
+    with patch(
+        "app.services.conversation_resource_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        updated = await ConversationResourceService.rewrite_skill_mounts(
+            skill_id="pdf", new_skill_id="pdf2", scope="global"
+        )
+
+    assert updated == 2
+    assert redis.scanned_patterns == ["conversation:*:*:resource_scope_v1"]
+    assert json.loads(redis.store[mine])["skills"] == [{"id": "pdf2"}]
+    assert json.loads(redis.store[other])["skills"] == [{"id": "pdf2"}]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_skill_mounts_owner_scope_ignores_other_users_same_id():
+    """该用户自己没有这条挂载时返回 0，且绝不顺手去改别人的同名挂载。"""
+    import json
+
+    other = "conversation:8:conv-b:resource_scope_v1"
+    redis = _FakeScanRedis({other: json.dumps({"skills": [{"id": "pdf"}]})})
+    with patch(
+        "app.services.conversation_resource_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        updated = await ConversationResourceService.rewrite_skill_mounts(
+            skill_id="pdf", new_skill_id=None, scope="personal", owner_id=7
+        )
+    assert updated == 0
+    assert redis.sets == []
+    assert json.loads(redis.store[other])["skills"] == [{"id": "pdf"}]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_skill_mounts_rejects_bogus_owner_identity():
+    """非法/空身份 fail closed：不扫描、不改任何 key。"""
+    redis = _FakeScanRedis({})
+    with patch(
+        "app.services.conversation_resource_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        updated = await ConversationResourceService.rewrite_skill_mounts(
+            skill_id="pdf", new_skill_id=None, scope="personal", owner_id="anonymous"
+        )
+    assert updated == 0
+    assert redis.scanned_patterns == []

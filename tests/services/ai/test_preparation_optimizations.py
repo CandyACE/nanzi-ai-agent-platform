@@ -60,7 +60,15 @@ async def test_resource_snapshot_reuses_authorized_catalog_without_cross_user_re
 
 
 @pytest.mark.asyncio
-async def test_workspace_cache_hit_does_not_rescan_skills(tmp_path, monkeypatch):
+async def test_workspace_cache_hit_rescans_skills_once_per_call(tmp_path, monkeypatch):
+    """缓存命中仍然**每轮发现一次**技能集合，但一次调用只发现一次。
+
+    契约在「技能集合与权限物化进沙箱」之后刻意调整过：管理员禁用/下架技能、改智能体
+    白名单都不会改缓存键，所以每次取用都必须重新发现一次技能集合去核对沙箱快照
+    （见 ``_sandbox_skills_snapshot_is_current``），否则缓存命中会把已经不该可见的技能
+    继续交给模型。这里钉住两件事：① 命中缓存返回同一个对象（没有重建工作区）；
+    ② 每次调用**只**发现一次——命中路径不许再额外扫一遍（那是纯浪费）。
+    """
     from app.services.ai.runtime.agentscope import workspace as module
 
     module.clear_workspace_cache()
@@ -70,12 +78,13 @@ async def test_workspace_cache_hit_does_not_rescan_skills(tmp_path, monkeypatch)
     monkeypatch.setattr(module, "discover_platform_skill_paths", scan)
     try:
         first = await module.get_local_workspace(user_id=7, conversation_id="one")
-        second = await module.get_local_workspace(user_id=7, conversation_id="one")
-        assert first is second
         assert scan.call_count == 1
+        second = await module.get_local_workspace(user_id=7, conversation_id="one")
+        assert first is second, "命中缓存必须返回同一个工作区对象"
+        assert scan.call_count == 2, "每次取用发现一次；命中路径不得重复发现"
         other = await module.get_local_workspace(user_id=8, conversation_id="one")
         assert other is not first
-        assert scan.call_count == 2
+        assert scan.call_count == 3
     finally:
         module.clear_workspace_cache()
 

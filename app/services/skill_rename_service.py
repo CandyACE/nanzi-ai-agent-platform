@@ -1,11 +1,14 @@
 """技能重命名 / 删除后的引用同步。
 
 技能 ID 就是目录名，因此「重命名」在磁盘上是一次 ``os.rename``；真正麻烦的是
-**引用**——同一个 ID 散落在三处：
+**引用**——同一个 ID 散落在四处：
 
 * ``skill_publications.source_personal_skill_id`` / ``platform_skill_id``：发布谱系
   （删源判定、重复提交复用、下架能力都依赖它）；
 * ``ai_agent_versions.skills``：智能体自定义公共技能白名单（JSON 列表）；
+* ``ai_agent_resource_permissions`` 里 ``resource_type='forbidden_skill'`` 的行：
+  「禁用技能」按 ``resource_id``（技能 ID）匹配，改名不同步就是**权限旁路**（换个 ID
+  就重新可用），见 :func:`sync_forbidden_skill_permissions`；
 * Redis 的会话资源范围 ``conversation:<uid>:<cid>:resource_scope_v1`` 里的
   ``skills`` 列表（用户挂载的技能 chip，TTL 30 天）。
 
@@ -25,7 +28,7 @@ import re
 import shutil
 from typing import Any, Dict, List
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.conversation_resource_service import ConversationResourceService
@@ -187,6 +190,52 @@ async def sync_agent_bindings(
     return sorted(item for item in changed if item)
 
 
+async def sync_forbidden_skill_permissions(
+    session: AsyncSession, *, old_skill_id: str, new_skill_id: str
+) -> int:
+    """把「禁用技能」权限行里的旧技能 ID 改为新 ID，返回被改动的行数。
+
+    ``ai_agent_resource_permissions`` 中 ``resource_type='forbidden_skill'`` 的行按
+    ``resource_id``（技能 ID）匹配，而重命名改的恰好就是这个 ID：不同步的话，管理员
+    禁用某个平台技能之后，把它改个名字，禁用规则就**静默失配**——同一个技能换个 ID
+    立刻对所有人重新可用（fail-open）。这是权限旁路，不是显示问题，所以必须同步。
+
+    只做「改名」，**不做删除**：下架/删除平台技能时 ``platform_skill_id`` 是被刻意保留的
+    （重新上架复用同一个 ID，见 ``revoke_published_version``），此时删掉禁用行会让
+    "重新上架后禁用自动消失"；留着最多是一条暂时匹配不到的行（fail-closed），管理员在
+    权限配置里取消勾选即可。
+
+    只对平台技能（``scope="global"``）调用：个人技能 ID 是用户自己的命名空间，
+    用户 A 的个人技能与用户 B 会话里的同名引用之间没有任何关系，全库改行会跨用户
+    篡改别人的禁用配置。
+    """
+    from app.models.permission import ResourcePermission
+
+    result = await session.execute(
+        update(ResourcePermission)
+        .where(
+            ResourcePermission.resource_type == "forbidden_skill",
+            ResourcePermission.resource_id == old_skill_id,
+        )
+        .values(resource_id=new_skill_id)
+    )
+    try:
+        changed = int(getattr(result, "rowcount", 0) or 0)
+    except (TypeError, ValueError):
+        # 轻量替身（AsyncMock 等）拿不到 rowcount：按 0 处理，不能因此让改名整体失败
+        changed = 0
+    if changed:
+        await session.commit()
+        # 禁用集合有 60s 的同步读缓存：不清理的话"旧 ID 仍被拦、新 ID 短暂放行"会持续到过期
+        try:
+            from app.services.ai.skills.policy import clear_forbidden_skill_cache
+
+            clear_forbidden_skill_cache()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[SkillRename] 禁用技能缓存清理失败: %s", exc)
+    return changed
+
+
 async def remove_agent_skill_bindings(session: AsyncSession, *, skill_id: str) -> List[str]:
     """把该技能从智能体自定义白名单里移除，返回受影响的智能体 ID 列表。
 
@@ -214,7 +263,11 @@ async def remove_agent_skill_bindings(session: AsyncSession, *, skill_id: str) -
 
 
 async def sync_conversation_mounts(
-    *, old_skill_id: str, new_skill_id: str, scope: str | None = None
+    *,
+    old_skill_id: str,
+    new_skill_id: str,
+    scope: str | None = None,
+    owner_id: Any = None,
 ) -> int:
     """把 Redis 里各会话挂载的技能 ID 改为新 ID，返回被改动的会话数。
 
@@ -231,13 +284,16 @@ async def sync_conversation_mounts(
             new_skill_id=new_skill_id,
             scope=scope,
             max_sessions=MAX_SESSION_SYNC,
+            owner_id=owner_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SkillRename] 会话挂载同步中断: %s", exc)
         return 0
 
 
-async def remove_conversation_mounts(*, skill_id: str, scope: str | None = None) -> int:
+async def remove_conversation_mounts(
+    *, skill_id: str, scope: str | None = None, owner_id: Any = None
+) -> int:
     """把 Redis 会话挂载里的该技能移除，返回被改动的会话数。
 
     与重命名共用同一个重写 helper，所以同样是「带 30 天 TTL 写回」而不是永久键。
@@ -250,6 +306,7 @@ async def remove_conversation_mounts(*, skill_id: str, scope: str | None = None)
         scope=scope,
         max_sessions=MAX_SESSION_SYNC,
         strict_unavailable=True,
+        owner_id=owner_id,
     )
 
 
@@ -332,7 +389,9 @@ async def remove_skill_references(
 
     try:
         report["synced"]["conversations"] = await remove_conversation_mounts(
-            skill_id=skill_id, scope=scope
+            skill_id=skill_id,
+            scope=scope,
+            owner_id=_actor_user_id(actor) if scope == "personal" else None,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SkillRename] 会话挂载清理失败: %s", exc)
@@ -372,6 +431,7 @@ async def rename_skill(
     old_skill_id: str,
     new_skill_id: str,
     scope: str,
+    actor: Any = None,
 ) -> Dict[str, Any]:
     """执行完整重命名并返回同步报告。
 
@@ -420,8 +480,24 @@ async def rename_skill(
             logger.warning("[SkillRename] 智能体绑定同步失败: %s", exc)
             report["warnings"].append("部分智能体的技能白名单未能同步，请在智能体配置里重新勾选")
 
+        try:
+            report["synced"]["permissions"] = await sync_forbidden_skill_permissions(
+                session, old_skill_id=old_skill_id, new_skill_id=new_skill_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[SkillRename] 禁用技能权限行同步失败: %s", exc)
+            report["warnings"].append(
+                "「禁用技能」权限行未能同步（技能已改名）：旧 ID 的禁用规则会失配，"
+                "请到权限配置里重新勾选"
+            )
+
     report["synced"]["conversations"] = await sync_conversation_mounts(
-        old_skill_id=old_skill_id, new_skill_id=new_skill_id, scope=scope
+        old_skill_id=old_skill_id,
+        new_skill_id=new_skill_id,
+        scope=scope,
+        # 个人技能只改自己的会话挂载（见 rewrite_skill_mounts 的 owner_id 说明）；
+        # 平台技能必须扫全库——所有用户会话里的挂载都要跟着改。
+        owner_id=_actor_user_id(actor) if scope == "personal" else None,
     )
     return report
 

@@ -403,6 +403,11 @@ def materialize_snapshot(
     target = skills_root / platform_skill_id
     staged = Path(tempfile.mkdtemp(prefix=f".{platform_skill_id}-", dir=str(skills_root)))
     backup: Path | None = None
+    # ``replaced`` 记录"新内容是否已经就位"。只有它为 True 时才能删 ``target``：
+    # 此前不管是哪一步失败都无条件 ``rmtree(target)``，于是**准备阶段**（拷快照、校验、
+    # 甚至 ``os.replace(target, backup)`` 本身）失败都会把**正在线上服务的**平台技能目录
+    # 删掉——审核这次通过失败，代价是线上技能消失，且没有备份可恢复。
+    replaced = False
     try:
         _copy_tree_contents(Path(snapshot_path), staged)
         copied_stats = validate_snapshot_tree(str(staged))
@@ -412,6 +417,7 @@ def materialize_snapshot(
             backup = skills_root / f".{platform_skill_id}.backup-{uuid.uuid4().hex}"
             os.replace(str(target), str(backup))
         os.replace(str(staged), str(target))
+        replaced = True
         _write_platform_metadata(
             target,
             platform_skill_id=platform_skill_id,
@@ -422,7 +428,8 @@ def materialize_snapshot(
             shutil.rmtree(backup, ignore_errors=True)
     except Exception:
         shutil.rmtree(staged, ignore_errors=True)
-        if target.exists():
+        if replaced and target.exists():
+            # 只清理"我们自己刚放上去的那一份"，随后把备份放回原位
             shutil.rmtree(target, ignore_errors=True)
         if backup is not None and backup.exists():
             os.replace(str(backup), str(target))
@@ -584,6 +591,8 @@ async def withdraw_personal_skill_publication(
             SkillPublication.source_personal_skill_id == skill_id,
         )
         .order_by(desc(SkillPublicationVersion.version_number))
+        # 行锁：两个并发的撤销/提交不会各自读到 PENDING 再双双写状态
+        .with_for_update()
     )
     row = result.first()
     if not row:
@@ -669,7 +678,12 @@ async def submit_personal_skill(session: AsyncSession, *, user: dict[str, Any], 
         submitted_by=user_id,
     )
     session.add(version)
-    publication.status = "PENDING"
+    # 已经上线过的谱系重新提交新版本时，**线上版本仍然在线**（current_version 非空），
+    # publication.status 必须保持 PUBLISHED：此前无条件写 PENDING，会让「下架」彻底不可用
+    # ——下架要求 status=PUBLISHED，管理端的可下架列表也只列 PUBLISHED，于是作者提交一次
+    # 新版本，管理员就再也下架不了正在线上服务的那一版（真实故障）。是否有待审版本由
+    # **版本行**表达（payload.pending_version / version_status），不靠这条汇总状态。
+    publication.status = "PUBLISHED" if publication.current_version else "PENDING"
     await session.flush()
     await notify_skill_publication_reviewers(
         session,
@@ -750,6 +764,9 @@ async def approve_publication(
         select(SkillPublicationVersion, SkillPublication)
         .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
         .where(SkillPublicationVersion.id == version_id)
+        # 行锁：两位审核人同时点"通过"时，第二个必须等第一个提交后再读，
+        # 从而看到 APPROVED 并得到 409，而不是也去物化一遍（两份新目录 + 状态互相覆盖）
+        .with_for_update()
     )
     row = result.first()
     if not row:
@@ -777,6 +794,11 @@ async def approve_publication(
     publication.platform_skill_id = platform_id
     publication.current_version = version.version_number
     publication.status = "PUBLISHED"
+    # 重新上架要清掉上一次下架的审计痕迹：否则管理端会一边显示"已发布"、一边带着
+    # revoked_at/revoked_by（"这版什么时候被下架的"变成误导信息）。
+    if getattr(publication, "revoked_at", None) is not None:
+        publication.revoked_at = None
+        publication.revoked_by = None
     publication.updated_at = now
     version.status = "APPROVED"
     version.reviewed_by = reviewer_id
@@ -800,6 +822,7 @@ async def reject_publication(
         select(SkillPublicationVersion, SkillPublication)
         .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
         .where(SkillPublicationVersion.id == version_id)
+        .with_for_update()  # 与"通过"同一把锁：驳回 vs 通过不能再各写一半
     )
     row = result.first()
     if not row:
@@ -824,15 +847,17 @@ async def reject_publication(
 async def list_published_publications(session: AsyncSession) -> list[dict[str, Any]]:
     """列出**当前已发布**的公共技能，供管理端「下架」列表使用。
 
-    只取 ``publication.status == PUBLISHED`` 且版本正是 ``current_version`` 的那一条：
-    ``SUPERSEDED`` 的历史版本、``REJECTED``/``WITHDRAWN``/``REVOKED`` 的版本都不该出现在
-    可下架列表里（对它们下架没有意义，只会得到 409）。
+    判据是**版本事实**：``version.status == "APPROVED"`` 且版本号正是
+    ``publication.current_version``。刻意不再要求 ``publication.status == "PUBLISHED"``
+    ——那条汇总状态会被"作者又提交了一版"改写成 PENDING（老数据里已经被写坏），
+    用它过滤会让仍然在线、且必须能下架的技能从列表里消失。``SUPERSEDED`` 的历史版本、
+    ``REJECTED``/``WITHDRAWN``/``REVOKED`` 的版本都不该出现在可下架列表里
+    （对它们下架没有意义，只会得到 409）。
     """
     result = await session.execute(
         select(SkillPublicationVersion, SkillPublication)
         .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
         .where(
-            SkillPublication.status == "PUBLISHED",
             SkillPublicationVersion.status == "APPROVED",
             SkillPublicationVersion.version_number == SkillPublication.current_version,
         )
@@ -863,9 +888,10 @@ def _assert_current_published(version: SkillPublicationVersion, publication: Ski
     """下架前的状态校验：只有「当前已发布版本」能下架，其余一律 409（而不是 500）。"""
     if version.status == "REVOKED":
         raise PublicationConflictError("publication version is already revoked")
+    # 只看版本事实，不看 publication.status：那条汇总状态可能因为"又提交了一版"而被写成
+    # PENDING（老缺陷留下的数据），此处若跟着它判，正在线上服务的版本就永远下架不掉。
     if (
         version.status != "APPROVED"
-        or publication.status != "PUBLISHED"
         or publication.current_version != version.version_number
     ):
         raise PublicationConflictError("publication version is not the current published version")
@@ -898,6 +924,8 @@ async def revoke_published_version(
         select(SkillPublicationVersion, SkillPublication)
         .join(SkillPublication, SkillPublication.id == SkillPublicationVersion.publication_id)
         .where(SkillPublicationVersion.id == version_id)
+        # 行锁：并发下架（或"下架 vs 重新提交"）时第二个必须重读到最新状态
+        .with_for_update()
     )
     row = result.first()
     if not row:

@@ -12,6 +12,9 @@ import { useUser } from '../composables/useUser'
 import InputModal from '../components/InputModal.vue'
 import { isSkillEnabled } from '@/utils/skillEnabled'
 
+/** 发布状态：与后端 skill_publication_service 的取值一一对应（新增状态必须同步这里）。 */
+type PublicationStatus = 'UNPUBLISHED' | 'PENDING' | 'PUBLISHED' | 'REJECTED' | 'WITHDRAWN' | 'REVOKED'
+
 interface Skill {
   id: string
   name: string
@@ -21,7 +24,7 @@ interface Skill {
   modified_at?: number
   enabled?: string
   publication_id?: string | null
-  publication_status?: 'UNPUBLISHED' | 'PENDING' | 'PUBLISHED' | 'REJECTED' | string
+  publication_status?: PublicationStatus
   current_public_version?: number | null
   pending_version?: number | null
   last_review_comment?: string | null
@@ -634,10 +637,13 @@ const cancelRevokePublication = () => {
  * 原因必填（后端 422 也会校验），空原因就地给出可见提示并**保持弹窗打开**，避免
  * 用户以为已经提交成功。
  */
-const submitRevokePublication = async () => {
+const submitRevokePublication = async (commentFromModal?: string) => {
   const target = revokeTarget.value
   if (!target || revokeSubmitting.value) return
-  const comment = revokeComment.value.trim()
+  // 以 confirm 载荷为准：InputModal 的输入值既经 @update:modelValue 同步到 revokeComment，
+  // 也随 confirm 事件回传。只读本地 ref 曾经让这个流程 100% 走不进请求（永远是空原因）。
+  const comment = (commentFromModal ?? revokeComment.value).trim()
+  revokeComment.value = comment
   if (!comment) {
     showToast('请填写下架原因（必填）', 'warning')
     return
@@ -718,10 +724,15 @@ const approvePublicationReview = async () => {
   if (!activePublicationReview.value) return
   publicationReviewAction.value = true
   try {
-    await axios.post(`/api/portal/skills/publication-requests/${activePublicationReview.value.version_id}/approve`)
+    const response = await axios.post(`/api/portal/skills/publication-requests/${activePublicationReview.value.version_id}/approve`)
+    if (response.data?.status !== 'success') {
+      showToast(response.data?.message || '发布平台技能失败', 'error')
+      return
+    }
     showToast('技能已审核通过并发布到平台技能库', 'success')
     activePublicationReview.value = null
-    await Promise.all([fetchPublicationQueue(), fetchSkills(), fetchPersonalSkills()])
+    // 通过后平台技能目录与「已发布」清单都会变化，两个列表都要刷新，否则角标与表格残留旧数据
+    await Promise.all([fetchPublicationQueue(), fetchSkills(), fetchPersonalSkills(), fetchPublications()])
   } catch (e: any) {
     showToast(e.response?.data?.detail || '发布平台技能失败', 'error')
   } finally {
@@ -806,6 +817,37 @@ const toggleSkillSortOrder = () => {
 
 const toggleFileTreeSortOrder = () => {
   fileTreeSortOrder.value = fileTreeSortOrder.value === 'asc' ? 'desc' : 'asc'
+}
+
+/**
+ * 发布状态徽章：所有取值都必须有文案与配色。
+ *
+ * 此前只用「PUBLISHED / PENDING / REJECTED / WITHDRAWN」四元三元表达式，落到 else 的是
+ * 空字符串——新增 REVOKED（下架）后，作者看到的是一个**没有文字的琥珀色圆点**，看起来
+ * 像"审核中"，完全不知道技能已被下架。这里改成显式映射 + 兜底，新增状态时不会再出现
+ * 「有徽章没文字」。
+ */
+const publicationBadgeLabel = (skill: Skill): string => {
+  const status = skill.publication_status
+  if (status === 'PUBLISHED') {
+    // 已发布 + 又提交了一版待审：线上仍是旧版，必须让作者看出来，否则他会以为自己刚提交
+    // 的内容已经生效（后端此时保持 publication_status=PUBLISHED、pending_version 有值）。
+    const online = `平台版 v${skill.current_public_version || 1}`
+    return skill.pending_version ? `${online} · 新版审核中` : online
+  }
+  if (status === 'PENDING') return '审核中'
+  if (status === 'REJECTED') return '已驳回'
+  if (status === 'WITHDRAWN') return '已撤销'
+  if (status === 'REVOKED') return '已下架'
+  return status ? String(status) : ''
+}
+
+const publicationBadgeClass = (status?: PublicationStatus): string => {
+  if (status === 'PUBLISHED') return 'bg-blue-100 text-blue-700'
+  if (status === 'REJECTED') return 'bg-red-100 text-red-700'
+  if (status === 'WITHDRAWN') return 'bg-gray-100 text-gray-600'
+  if (status === 'REVOKED') return 'bg-orange-100 text-orange-700'
+  return 'bg-amber-100 text-amber-700'
 }
 
 const formatModifiedAt = (ts?: number) => {
@@ -962,13 +1004,19 @@ const renameSubmitting = ref(false)
 /**
  * 把后端的引用同步报告压成「同步了几处 + 几条警告」。
  *
- * `synced` 是后端按引用类别给出的成功条数（重命名：agents / publications / conversations；
- * 删除：解除绑定与挂载清理），`warnings` 是未能同步的具体说明。两者都必须让用户看到，
- * 否则「技能还在但哪都挂不上」这种断链会悄无声息。
+ * `synced` 是后端按引用类别给出的成功条数（重命名：agents / publications / conversations /
+ * permissions；删除：解除绑定与挂载清理），`warnings` 是未能同步的具体说明。两者都必须让
+ * 用户看到，否则「技能还在但哪都挂不上」这种断链会悄无声息。
+ *
+ * `agents` 这一类后端给的是**智能体 ID 列表**而不是条数：`Number(['a','b'])` 是 NaN，
+ * 此前会被当成 0，于是"已同步 N 处引用"在真的同步了智能体白名单时反而少算（甚至显示 0）。
  */
 const summarizeReferenceSync = (data: any): { syncedCount: number; warnings: string[] } => {
   const synced = data?.synced || {}
-  const syncedCount = Object.values(synced).reduce<number>((sum, value) => sum + (Number(value) || 0), 0)
+  const syncedCount = Object.values(synced).reduce<number>((sum, value) => {
+    if (Array.isArray(value)) return sum + value.length
+    return sum + (Number(value) || 0)
+  }, 0)
   const warnings = Array.isArray(data?.warnings) ? (data?.warnings as string[]) : []
   return { syncedCount, warnings }
 }
@@ -979,10 +1027,10 @@ const renameSkill = (skillId: string, scope?: 'global' | 'personal') => {
 }
 
 /** 提交重命名。ID 即目录名，同时被智能体白名单、发布谱系与会话挂载引用。 */
-const submitRename = async () => {
+const submitRename = async (nextIdFromModal?: string) => {
   const target = renameDialog.value
   if (!target || renameSubmitting.value) return
-  const newSkillId = target.draft.trim()
+  const newSkillId = (nextIdFromModal ?? target.draft).trim()
   // 空 ID 与非法 ID 都在本地就地拦下并给出可见提示（弹窗保持打开），
   // 否则用户点完「确定」什么都没发生，只能自己猜哪里错了。
   if (!newSkillId) {
@@ -990,7 +1038,7 @@ const submitRename = async () => {
     return
   }
   if (newSkillId === target.skillId) {
-    renameDialog.value = null
+    showToast('技能 ID 未变化，请修改后再提交', 'warning')
     return
   }
   if (!/^[a-zA-Z0-9_-]+$/.test(newSkillId)) {
@@ -2305,9 +2353,9 @@ onUnmounted(() => {
                 <span
                   v-if="skill.scope === 'personal' && skill.publication_status && skill.publication_status !== 'UNPUBLISHED'"
                   class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
-                  :class="skill.publication_status === 'PUBLISHED' ? 'bg-blue-100 text-blue-700' : skill.publication_status === 'REJECTED' ? 'bg-red-100 text-red-700' : skill.publication_status === 'WITHDRAWN' ? 'bg-gray-100 text-gray-600' : 'bg-amber-100 text-amber-700'"
+                  :class="publicationBadgeClass(skill.publication_status)"
                 >
-                  {{ skill.publication_status === 'PUBLISHED' ? `平台版 v${skill.current_public_version || 1}` : skill.publication_status === 'PENDING' ? '审核中' : skill.publication_status === 'REJECTED' ? '已驳回' : skill.publication_status === 'WITHDRAWN' ? '已撤销' : '' }}
+                  {{ publicationBadgeLabel(skill) }}
                 </span>
               </div>
               <p class="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-gray-400">
@@ -2367,7 +2415,7 @@ onUnmounted(() => {
         </p>
 
         <div v-if="skill.scope === 'personal'" class="mt-3 flex items-center justify-between gap-2">
-          <span v-if="skill.last_review_comment" class="min-w-0 truncate text-[10px] text-red-500" :title="skill.last_review_comment">驳回：{{ skill.last_review_comment }}</span>
+          <span v-if="skill.last_review_comment" class="min-w-0 truncate text-[10px] text-red-500" :title="skill.last_review_comment">{{ skill.publication_status === 'REVOKED' ? '下架原因' : '驳回' }}：{{ skill.last_review_comment }}</span>
           <span v-else class="text-[10px] text-gray-400">个人源文件始终保留</span>
           <div class="flex shrink-0 items-center gap-1.5">
             <button

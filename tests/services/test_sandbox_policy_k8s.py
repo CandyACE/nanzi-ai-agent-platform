@@ -1541,3 +1541,59 @@ async def test_policy_k8s_workspace_reuses_sandbox_skill_governance(monkeypatch,
     assert ws_mod._read_sandbox_skills_fingerprint(str(host_workdir), layout)
     assert ws._platform_sandbox_policy == SANDBOX_POLICY_K8S
     assert ws._platform_sandbox_public_docs_mounted is True
+
+
+@pytest.mark.asyncio
+async def test_k8s_workspace_stop_deletes_pods_missing_from_cache(monkeypatch):
+    """★ 停止沙箱不能只看进程内缓存：集群里真实存在但本进程不认识的 Pod 也要删掉。
+
+    只遍历 ``_k8s_workspace_cache`` 时，进程重启过、或 Pod 由别的副本创建的场合，接口
+    会回一个 ``status="stopped"`` 而 Pod 仍在跑（既不回收资源，"停止沙箱"也是假的），
+    只能等孤儿回收器按最小存活时长兜底。Docker 侧的 ``stop`` 早已按标签反查全部容器，
+    K8s 侧这里对齐。
+    """
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import stop_k8s_workspace
+
+    await _patch_k8s_policy(monkeypatch)
+    ws_module._k8s_workspace_cache.clear()
+    ws_module._k8s_workspace_locks.pop(K8S_RUNTIME_CACHE_KEY, None)
+
+    scanned: list[tuple[str, list[str]]] = []
+    deleted: list[tuple[str, str]] = []
+
+    async def fake_pod_names(namespace, patterns):
+        scanned.append((namespace, list(patterns)))
+        return ["as-ws-alice__1-deadbeef", "as-ws-alice__1-cafebabe"]
+
+    async def fake_delete(namespace, pod_name):
+        deleted.append((namespace, pod_name))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.find_k8s_sandbox_pod_names",
+        fake_pod_names,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.delete_k8s_sandbox_pod",
+        fake_delete,
+    )
+
+    try:
+        result = await stop_k8s_workspace(
+            user_id=1,
+            user_name="alice",
+            conversation_id="conv-1",
+        )
+    finally:
+        ws_module._k8s_workspace_cache.clear()
+        ws_module._k8s_workspace_locks.pop(K8S_RUNTIME_CACHE_KEY, None)
+
+    assert result["status"] == "stopped"
+    assert result["deleted_pods"] == [
+        "as-ws-alice__1-deadbeef",
+        "as-ws-alice__1-cafebabe",
+    ]
+    assert deleted, "缓存里没有的 Pod 也必须真的删掉"
+    assert scanned and scanned[0][1], "必须按用户标识的模式做标签反查"
+    assert "alice" in scanned[0][1][0], "反查模式要限定到当前用户"
