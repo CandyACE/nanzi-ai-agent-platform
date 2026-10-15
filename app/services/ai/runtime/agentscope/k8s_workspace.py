@@ -694,6 +694,11 @@ def build_k8s_workspace_with_nanzi_adapter(
     return _NanZiK8sWorkspace(
         existing_pvc=existing_pvc,
         sandbox_user_key=sandbox_user_key,
+        # 技能集合令牌必须转交到实例：漏传会让 ``_nanzi_skills_layout`` 恒为 None，
+        # 于是 subPath 恒挂历史单份布局 ``sandbox/skills``，而平台治理（指纹 / seed
+        # 作废 / 分区同步 / 禁用清理）全部写在 ``sandbox/skills-<令牌>`` 上——
+        # 沙箱读的不是治理写的那一份，同一用户多个技能集合还会共用同一目录。
+        sandbox_skills_layout=sandbox_skills_layout,
         public_docs_mounted=public_docs_mounted,
         local_data_root=local_data_root,
         **kwargs,

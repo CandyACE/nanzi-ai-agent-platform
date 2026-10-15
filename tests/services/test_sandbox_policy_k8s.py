@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 pytestmark = pytest.mark.no_infrastructure
 
+#: 测试用技能集合令牌：必须出现在 subPath 目录名里（``skills-<令牌>``）。
+SKILLS_LAYOUT = "deadbeef1234"
+
 
 @pytest.mark.asyncio
 async def test_policy_k8s_workspace_build_and_initialize(monkeypatch):
@@ -252,10 +255,15 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
         DummyBaseWithPod,
         existing_pvc="shared-pvc",
         sandbox_user_key="u_test_123",
+        sandbox_skills_layout=SKILLS_LAYOUT,
         public_docs_mounted=True,
         local_data_root=str(tmp_path),
         resources={"limits": {"cpu": "1000m", "memory": "1Gi"}},
     )
+
+    # 技能集合令牌必须真的落到实例上：构造时漏传会让 subPath 恒挂历史单份布局
+    # ``sandbox/skills``，与平台按令牌分片的治理目录脱节（多技能集合互见）。
+    assert ws._nanzi_skills_layout == SKILLS_LAYOUT
 
     await ws._create_pod()
 
@@ -277,7 +285,10 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     # （${workdir}/skills）会落在个人技能源目录上，把模板 .seed 写进用户源码目录，
     # 同时丢掉「公共技能打包副本」与「个人技能源」的隔离。
     skills_mount = next(m for m in mounts if m.mount_path == "/workspace/skills")
-    assert skills_mount.sub_path == "agent_workspaces/u_test_123/sandbox/skills"
+    assert (
+        skills_mount.sub_path
+        == f"agent_workspaces/u_test_123/sandbox/skills-{SKILLS_LAYOUT}"
+    )
     assert skills_mount.read_only is not True
 
     personal_skills_mount = next(
@@ -297,7 +308,9 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     assert os.path.isdir(precreated_user_workdir)
     # 技能两条 subPath 目录必须在 kubelet 挂载前物理存在，否则 Pod 会卡在
     # ContainerCreating（MountVolume.SetUp failed）
-    assert os.path.isdir(os.path.join(precreated_user_workdir, "sandbox", "skills"))
+    assert os.path.isdir(
+        os.path.join(precreated_user_workdir, "sandbox", f"skills-{SKILLS_LAYOUT}")
+    )
     assert os.path.isdir(os.path.join(precreated_user_workdir, "skills"))
 
     # 校验 resources 自动补齐 requests

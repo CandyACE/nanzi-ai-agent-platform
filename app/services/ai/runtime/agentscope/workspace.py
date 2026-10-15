@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import fnmatch
 import hashlib
@@ -2606,6 +2607,107 @@ def _touch_sandbox_workspace(cache_key: str) -> None:
     _touch_k8s_workspace(cache_key)
 
 
+#: 执行期心跳的最小间隔（秒）。真正的心跳间隔取 ``max(它, idle/3)``：既保证远小于
+#: 空闲阈值，又不会把 ``sandbox_idle_time`` 调得很小时变成高频写字典。
+SANDBOX_ACTIVITY_HEARTBEAT_MIN_SECONDS = 5.0
+
+
+def _touch_sandbox_workspaces_for_user(
+    sandbox_user_key: str,
+    *,
+    policy: str | None = None,
+) -> int:
+    """刷新该用户名下所有活跃缓存条目的活跃时间，返回命中的条目数。
+
+    只读入口（终端）手里没有技能集合上下文，因此按 ``::<user_key>::`` 精确匹配
+    （两侧都是分隔符，前缀重合的其它用户不会被吃掉），可选再按策略后缀过滤。
+    """
+    touched = 0
+    needle = f"::{sandbox_user_key}::"
+    for cache, touch in (
+        (_docker_workspace_cache, _touch_docker_workspace),
+        (_k8s_workspace_cache, _touch_k8s_workspace),
+    ):
+        for cache_key in list(cache.keys()):
+            if not isinstance(cache_key, str):
+                continue
+            if needle not in cache_key and not cache_key.endswith(f"::{sandbox_user_key}"):
+                continue
+            if policy and not cache_key.endswith(f"::{policy}"):
+                continue
+            touch(cache_key)
+            touched += 1
+    return touched
+
+
+def _touch_sandbox_activity(
+    *,
+    cache_key: str | None = None,
+    sandbox_user_key: str | None = None,
+    policy: str | None = None,
+) -> None:
+    """按缓存键（首选）或用户键刷新沙箱活跃时间。"""
+    if cache_key:
+        _touch_sandbox_workspace(cache_key)
+        return
+    if sandbox_user_key:
+        _touch_sandbox_workspaces_for_user(sandbox_user_key, policy=policy)
+
+
+@contextlib.asynccontextmanager
+async def _sandbox_activity_heartbeat(
+    *,
+    cache_key: str | None = None,
+    sandbox_user_key: str | None = None,
+    policy: str | None = None,
+) -> Any:
+    """执行期间周期性刷新沙箱活跃时间，避免长命令被空闲回收中断。
+
+    空闲回收只看 ``last_used``，而它此前只在「拉起沙箱」「缓存命中」「Bash 调用**开始
+    前**」刷新：一条执行超过 ``sandbox_idle_time``（默认 15 分钟）的命令，或者终端里
+    跑的长任务，会在中途被 reaper 关闭容器/Pod（终端侧甚至只在命令**结束后**才刷新）。
+
+    心跳只影响空闲判定，不影响权限逐出（``_evict_*`` 是显式调用，与 ``last_used``
+    无关），所以「技能快照过期 → 立刻作废沙箱」的语义不受影响。
+    """
+    touch_kwargs: dict[str, Any] = {
+        "cache_key": cache_key,
+        "sandbox_user_key": sandbox_user_key,
+        "policy": policy,
+    }
+    _touch_sandbox_activity(**touch_kwargs)
+
+    stop = asyncio.Event()
+
+    async def _beat() -> None:
+        while True:
+            try:
+                idle_seconds = await _effective_sandbox_idle_seconds(
+                    default_seconds=DOCKER_WORKSPACE_IDLE_SECONDS
+                )
+            except Exception:  # noqa: BLE001 - 读配置失败按默认阈值心跳
+                idle_seconds = float(DOCKER_WORKSPACE_IDLE_SECONDS)
+            interval = max(SANDBOX_ACTIVITY_HEARTBEAT_MIN_SECONDS, idle_seconds / 3.0)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                try:
+                    _touch_sandbox_activity(**touch_kwargs)
+                except Exception:  # noqa: BLE001 - 心跳失败不影响命令执行
+                    logger.debug("[workspace] sandbox heartbeat touch failed", exc_info=True)
+                continue
+            return
+
+    beat_task = asyncio.create_task(_beat())
+    try:
+        yield
+    finally:
+        stop.set()
+        beat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await beat_task
+
+
 async def reap_idle_docker_workspaces(
     *,
     idle_seconds: float = DOCKER_WORKSPACE_IDLE_SECONDS,
@@ -2638,11 +2740,221 @@ async def reap_idle_docker_workspaces(
     return reaped
 
 
+# ---------------------------------------------------------------------------
+# 孤儿沙箱对账（进程重启 / 命名演进后脱离进程内注册表的历史容器与 Pod）
+# ---------------------------------------------------------------------------
+#: 空闲回收只遍历进程内字典，因此「缓存里没有」的容器/Pod 永远不会被回收：进程重启
+#: 丢缓存、技能集合令牌变化（升级或白名单变更）都会留下再也无人认领的沙箱，旧命名
+#: （``as_ws_<user>``）连「同名 create_or_replace 顶掉」这条兜底都蹭不到。
+#: 这里按 AgentScope 打在容器/Pod 上的 label 反向对账：凡是不在本进程注册表中、且
+#: **物理创建时间**已超过 ``SANDBOX_ORPHAN_MIN_AGE_SECONDS`` 的，一律回收。
+#:
+#: ⚠️ 该对账只在**单副本**部署下安全：注册表是进程内的，另一个副本正在用的沙箱在本
+#: 进程看来同样"无人认领"。多副本部署必须把 ``sandbox_orphan_reconcile`` 设为 false
+#: （或先把活跃沙箱注册表搬到 Redis），否则副本之间会互删正在使用的沙箱。
+SANDBOX_ORPHAN_RECONCILE_KEY = "sandbox_orphan_reconcile"
+#: 只有创建时间超过它才允许回收：新建中的沙箱（含另一路并发刚拉起的）绝不动。
+SANDBOX_ORPHAN_MIN_AGE_SECONDS = 1800.0
+#: 对账周期：与空闲回收同一循环，但按更长的间隔执行（默认 10 分钟）。
+SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS = 600.0
+
+
+async def _orphan_reconcile_enabled() -> bool:
+    """读取 ``sandbox_orphan_reconcile``（默认开启）。读不到时按开启处理。"""
+    from app.services.config_service import ConfigService
+
+    try:
+        raw = await ConfigService.get(SANDBOX_ORPHAN_RECONCILE_KEY, "true")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] orphan reconcile flag unreadable: %s", exc)
+        return True
+    return str(raw if raw is not None else "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    )
+
+
+def _live_sandbox_workspace_ids(cache: dict[str, Any]) -> set[str]:
+    """本进程注册表中仍然活跃的 ``workspace_id`` 集合（容器名/Pod 名的判据）。"""
+    workspace_ids: set[str] = set()
+    for workspace in list(cache.values()):
+        workspace_id = getattr(workspace, "_platform_workspace_id", None) or getattr(
+            workspace, "workspace_id", None
+        )
+        if workspace_id:
+            workspace_ids.add(str(workspace_id))
+    return workspace_ids
+
+
+def _container_label(container: Any, key: str) -> str:
+    """从 aiodocker 容器对象上读一个 label（兼容测试替身与真实返回）。"""
+    raw = getattr(container, "_container", None)
+    labels = raw.get("Labels") if isinstance(raw, dict) else None
+    labels = labels if isinstance(labels, dict) else {}
+    return str(labels.get(key) or "")
+
+
+def _container_name(container: Any) -> str:
+    raw = getattr(container, "_container", None)
+    names = raw.get("Names") if isinstance(raw, dict) else None
+    if isinstance(names, list) and names:
+        return str(names[0]).lstrip("/")
+    return str(getattr(container, "id", "") or "")
+
+
+async def reconcile_orphan_docker_workspaces(
+    *,
+    min_age_seconds: float = SANDBOX_ORPHAN_MIN_AGE_SECONDS,
+    now: float | None = None,
+) -> int:
+    """回收本进程不再认知的 Docker 沙箱容器，返回回收数量。
+
+    任何一步失败都只告警：对账是尽力而为的清理，绝不能影响正常的沙箱创建与回收。
+    """
+    try:
+        import aiodocker
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] aiodocker unavailable for orphan reconcile: %s", exc)
+        return 0
+
+    current = time.time() if now is None else now
+    live_ids = _live_sandbox_workspace_ids(_docker_workspace_cache)
+    client: Any | None = None
+    try:
+        client = aiodocker.Docker()
+        listed = await client.containers.list(
+            all=True, filters={"label": "agentscope.workspace=true"}
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] orphan container scan failed: %s", exc)
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.close()
+        return 0
+
+    removed = 0
+    try:
+        for item in listed or []:
+            workspace_id = _container_label(item, "agentscope.workspace.id")
+            if not workspace_id or workspace_id in live_ids:
+                continue
+            raw = getattr(item, "_container", None)
+            try:
+                created = float(raw.get("Created") or 0) if isinstance(raw, dict) else 0.0
+            except (TypeError, ValueError):
+                created = 0.0
+            # 拿不到创建时间就保守跳过：宁可留一台孤儿，也不能误删刚拉起的沙箱。
+            if created <= 0 or current - created < min_age_seconds:
+                continue
+            name = _container_name(item)
+            try:
+                await item.delete(force=True)
+            except Exception as exc:  # noqa: BLE001
+                if getattr(exc, "status", None) != 404:
+                    logger.warning(
+                        "[workspace] Failed to reclaim orphan container %s: %s",
+                        name,
+                        exc,
+                    )
+                continue
+            removed += 1
+            logger.warning(
+                "[workspace] Reclaimed orphan docker sandbox container=%s workspace_id=%s age=%.0fs",
+                name,
+                workspace_id,
+                current - created,
+            )
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.close()
+    return removed
+
+
+async def reconcile_orphan_k8s_workspaces(
+    *,
+    min_age_seconds: float = SANDBOX_ORPHAN_MIN_AGE_SECONDS,
+    now: float | None = None,
+) -> int:
+    """回收本进程不再认知的 K8s 沙箱 Pod，返回回收数量（语义同 Docker 版）。"""
+    try:
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio import config as k8s_async_config
+    except ImportError:
+        return 0
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import resolve_sandbox_namespace
+
+    try:
+        from app.services.config_service import ConfigService
+
+        namespace = resolve_sandbox_namespace(
+            await ConfigService.get("sandbox_k8s_namespace", "")
+        )
+    except Exception:  # noqa: BLE001
+        namespace = resolve_sandbox_namespace(None)
+
+    try:
+        k8s_async_config.load_incluster_config()
+    except Exception:
+        try:
+            await k8s_async_config.load_kube_config()
+        except Exception:
+            return 0
+
+    current = time.time() if now is None else now
+    live_ids = _live_sandbox_workspace_ids(_k8s_workspace_cache)
+    removed = 0
+    try:
+        async with k8s_client.ApiClient() as api_client:
+            core_v1 = k8s_client.CoreV1Api(api_client)
+            pods = await core_v1.list_namespaced_pod(
+                namespace=namespace,
+                label_selector="agentscope.workspace=true",
+            )
+            for pod in getattr(pods, "items", None) or []:
+                metadata = getattr(pod, "metadata", None)
+                labels = getattr(metadata, "labels", None) or {}
+                workspace_id = str(labels.get("agentscope.workspace.id") or "")
+                pod_name = str(getattr(metadata, "name", "") or "")
+                if not pod_name or not workspace_id or workspace_id in live_ids:
+                    continue
+                try:
+                    created = float(metadata.creation_timestamp.timestamp())
+                except Exception:  # noqa: BLE001
+                    created = 0.0
+                if created <= 0 or current - created < min_age_seconds:
+                    continue
+                try:
+                    await core_v1.delete_namespaced_pod(
+                        name=pod_name, namespace=namespace
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[workspace] Failed to reclaim orphan pod %s: %s", pod_name, exc
+                    )
+                    continue
+                removed += 1
+                logger.warning(
+                    "[workspace] Reclaimed orphan k8s sandbox pod=%s namespace=%s workspace_id=%s age=%.0fs",
+                    pod_name,
+                    namespace,
+                    workspace_id,
+                    current - created,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] orphan pod scan failed: %s", exc)
+    return removed
+
+
 async def _docker_workspace_reaper_loop(
     *,
     idle_seconds: float,
     interval_seconds: float,
 ) -> None:
+    next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
     while True:
         await asyncio.sleep(interval_seconds)
         try:
@@ -2655,6 +2967,17 @@ async def _docker_workspace_reaper_loop(
             raise
         except Exception:  # noqa: BLE001
             logger.exception("[workspace] Docker workspace reaper iteration failed")
+
+        if time.monotonic() < next_reconcile_at:
+            continue
+        next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
+        try:
+            if await _orphan_reconcile_enabled():
+                await reconcile_orphan_docker_workspaces()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("[workspace] Docker orphan reconcile failed")
 
 
 def start_docker_workspace_reaper(
@@ -2701,6 +3024,7 @@ async def _k8s_workspace_reaper_loop(
     idle_seconds: float,
     interval_seconds: float,
 ) -> None:
+    next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
     while True:
         await asyncio.sleep(interval_seconds)
         try:
@@ -2713,6 +3037,17 @@ async def _k8s_workspace_reaper_loop(
             raise
         except Exception:  # noqa: BLE001
             logger.exception("[workspace] K8s workspace reaper iteration failed")
+
+        if time.monotonic() < next_reconcile_at:
+            continue
+        next_reconcile_at = time.monotonic() + SANDBOX_ORPHAN_RECONCILE_INTERVAL_SECONDS
+        try:
+            if await _orphan_reconcile_enabled():
+                await reconcile_orphan_k8s_workspaces()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("[workspace] K8s orphan reconcile failed")
 
 
 def start_k8s_workspace_reaper(
@@ -4135,35 +4470,41 @@ async def exec_docker_workspace_command(
             f"printf '\\n{pwd_marker}:%s\\n' \"$PWD\"\n"
             f"exit $__NZ_RET"
         )
-        exec_obj = await container.exec(
-            cmd=["/bin/bash", "-c", wrapped_command],
-            workdir=effective_workdir,
-            stdout=True,
-            stderr=True,
-            stdin=False,
-            tty=False,
-        )
-        stdout_chunks: list[str] = []
-        stderr_chunks: list[str] = []
+        # 终端命令可能长时间运行：执行期间心跳刷新活跃时间，避免容器被空闲回收
+        # （此前只在命令结束后才 touch，长命令跑到一半会被 reaper 关掉）。
+        async with _sandbox_activity_heartbeat(
+            sandbox_user_key=sandbox_user_key,
+            policy=SANDBOX_POLICY_DOCKER,
+        ):
+            exec_obj = await container.exec(
+                cmd=["/bin/bash", "-c", wrapped_command],
+                workdir=effective_workdir,
+                stdout=True,
+                stderr=True,
+                stdin=False,
+                tty=False,
+            )
+            stdout_chunks: list[str] = []
+            stderr_chunks: list[str] = []
 
-        async with exec_obj.start(detach=False) as stream:
-            while True:
-                msg = await stream.read_out()
-                if msg is None:
-                    break
-                stream_type = getattr(msg, "stream", 1)
-                raw_data = getattr(msg, "data", msg)
-                if isinstance(raw_data, (bytes, bytearray)):
-                    text = raw_data.decode("utf-8", errors="replace")
-                else:
-                    text = str(raw_data or "")
-                if stream_type == 2:
-                    stderr_chunks.append(text)
-                else:
-                    stdout_chunks.append(text)
+            async with exec_obj.start(detach=False) as stream:
+                while True:
+                    msg = await stream.read_out()
+                    if msg is None:
+                        break
+                    stream_type = getattr(msg, "stream", 1)
+                    raw_data = getattr(msg, "data", msg)
+                    if isinstance(raw_data, (bytes, bytearray)):
+                        text = raw_data.decode("utf-8", errors="replace")
+                    else:
+                        text = str(raw_data or "")
+                    if stream_type == 2:
+                        stderr_chunks.append(text)
+                    else:
+                        stdout_chunks.append(text)
 
-        inspect_info = await exec_obj.inspect()
-        exit_code = inspect_info.get("ExitCode", 0)
+            inspect_info = await exec_obj.inspect()
+            exit_code = inspect_info.get("ExitCode", 0)
         duration_ms = max(0, int((time.monotonic() - start_time) * 1000))
 
         full_stdout = "".join(stdout_chunks)
@@ -6052,9 +6393,14 @@ class LazySandboxBashNativeTool:
     async def __call__(self, **kwargs: Any) -> Any:
         real_tool = await self._resolve_real_tool()
         self._assert_sandbox_still_registered()
-        result = real_tool(**kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        # 执行期间持续刷新活跃时间：命令本身可能跑得比 sandbox_idle_time 更久，
+        # 只在开始前 touch 一次会让 reaper 误判为空闲并关掉正在使用的沙箱。
+        async with _sandbox_activity_heartbeat(
+            cache_key=getattr(self.proxy, "_sandbox_cache_key", None)
+        ):
+            result = real_tool(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
         return result
 
 
@@ -6364,12 +6710,18 @@ async def exec_k8s_workspace_command(
 
     from app.services.ai.runtime.agentscope.k8s_workspace import exec_k8s_sandbox_command
 
-    result = await exec_k8s_sandbox_command(
-        namespace=namespace,
-        pod_name=pod_name,
-        command=command,
-        workdir=workdir,
-    )
+    # 终端里的一条命令同样可能跑很久：此前只在命令结束后才刷新活跃时间，执行期间
+    # 沙箱处于「看起来空闲」状态，会被 reaper 关掉（用户看到终端被踢）。
+    async with _sandbox_activity_heartbeat(
+        sandbox_user_key=user_key,
+        policy=SANDBOX_POLICY_K8S,
+    ):
+        result = await exec_k8s_sandbox_command(
+            namespace=namespace,
+            pod_name=pod_name,
+            command=command,
+            workdir=workdir,
+        )
     result["execution_backend"] = SANDBOX_POLICY_K8S
     result["workspace_id"] = user_key
     result["pod_name"] = pod_name
