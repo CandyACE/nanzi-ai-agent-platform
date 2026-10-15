@@ -10,7 +10,8 @@ import fnmatch
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.code_execution_service import run_shell_command_capture
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
-from app.utils.skill_metadata import is_skill_enabled
+from app.services.skill_rename_service import SkillRenameError, validate_skill_id
+from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -56,38 +57,25 @@ def validate_safe_path(path: str) -> str:
 
 
 def _validate_skill_id(skill_id: str) -> str:
-    if not skill_id or "/" in skill_id or "\\" in skill_id or ".." in skill_id:
-        raise ValueError("非法技能 ID 格式。禁止包含路径分隔符或穿越符。")
-    if not re.match(r"^[a-zA-Z0-9_-]+$", skill_id):
-        raise ValueError("非法技能 ID 格式。仅允许包含英文字母、数字、中划线和下划线。")
-    return skill_id
+    """校验技能 ID（格式、长度 1-128、平台保留字），口径收敛到 skill_rename_service。
+
+    此前这里是第二份正则：没有长度上限、也不认保留字，于是模型能创建出一个叫
+    ``stats``/``export`` 的技能——它会命中更早注册的字面路由，技能永远打不开。
+    """
+    try:
+        return validate_skill_id(skill_id)
+    except SkillRenameError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> dict:
-    meta = {
-        "id": skill_id,
-        "name": skill_id,
-        "description": "暂无技能描述",
-    }
-    if not os.path.exists(skill_md_path):
-        return meta
+    """读取 SKILL.md 元数据；解析实现只有 :func:`app.utils.skill_metadata.parse_skill_frontmatter` 一份。
 
-    try:
-        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read(8192)
-        match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
-        if not match:
-            return meta
-        frontmatter = match.group(1)
-        name_match = re.search(r"^name:\s*(.+)$", frontmatter, re.MULTILINE)
-        desc_match = re.search(r"^description:\s*(.+)$", frontmatter, re.MULTILINE)
-        if name_match:
-            meta["name"] = name_match.group(1).strip().strip("\"'")
-        if desc_match:
-            meta["description"] = desc_match.group(1).strip().strip("\"'")
-    except Exception as e:
-        logger.warning("[Skills] Failed to parse frontmatter for %s: %s", skill_id, e)
-    return meta
+    此前这里是第三份 frontmatter 解析（只认 name/description 两行、默认描述
+    「暂无技能描述」），与列表页、运行时的结果可能不一致。统一后默认描述为空字符串；
+    需要展示兜底文案的调用方自己补。
+    """
+    return parse_skill_frontmatter(skill_id, skill_md_path)
 
 
 def _is_forbidden_shell_command(command: str) -> str | None:
@@ -735,11 +723,13 @@ def create_skills(
                    必须先向用户确认「确实要整份替换现有技能」，再带 overwrite=true 重试。
     """
     try:
-        import re
-        if not skill_id or "/" in skill_id or "\\" in skill_id or ".." in skill_id:
-            return "错误：非法技能 ID 格式。禁止包含路径分隔符或穿越符。"
-        if not re.match(r"^[a-zA-Z0-9_-]+$", skill_id):
-            return "错误：技能 ID 仅允许包含英文字母、数字、中划线和下划线。"
+        # ID 校验与端点/重命名/上传共用同一份实现：格式、128 长度上限、平台保留字。
+        # 此前这里绕过保留字与长度校验，模型可以造出叫 stats/export 的「幽灵技能」
+        # （目录建成了，但详情路由被更早注册的字面路由遮蔽，用户永远打不开）。
+        try:
+            skill_id = validate_skill_id(skill_id)
+        except SkillRenameError as exc:
+            return f"错误：{exc}"
 
         # 获取当前运行上下文中的用户信息
         from app.utils.context import current_user_info

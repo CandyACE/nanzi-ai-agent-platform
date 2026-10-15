@@ -9,6 +9,12 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from app.core.config import settings
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.config_service import ConfigService
+# 技能来源口径（scope）的唯一解析/判定入口：挂载项属于个人还是公共，全平台只此一份口径。
+from app.utils.skill_metadata import (
+    is_personal_skill_attachment,
+    is_personal_skill_scope,
+    normalize_skill_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -300,12 +306,19 @@ class SkillInjector:
         }
 
     @classmethod
-    def drop_disabled_skill_items(cls, items: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    def drop_disabled_skill_items(
+        cls,
+        items: Optional[List[Dict[str, Any]]],
+        user_info: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         """丢弃 frontmatter 里 ``enabled`` 判定为禁用的挂载项。
 
         口径统一走 :func:`app.utils.skill_metadata.is_skill_enabled`：此前挂载这条路
         完全不看 enabled，只拦 forbidden，于是「管理页显示已禁用、挂载后照样整份注入」。
         取不到元数据时按**启用**处理——保守方向：不因读盘失败而误丢用户显式挂载的技能。
+
+        ``user_info`` 透传给元数据读取：个人技能的目录由用户身份推导，缺了它只能退回请求
+        上下文（pipeline 早期阶段不一定有），会读不到个人技能的 frontmatter。
         """
         from app.utils.skill_metadata import is_skill_enabled
 
@@ -320,7 +333,7 @@ class SkillInjector:
                 continue
             meta = item.get("skillMeta") or item.get("skill_meta")
             if not isinstance(meta, dict) or "enabled" not in meta:
-                meta = cls._read_skill_meta_for_mount(item, skill_id)
+                meta = cls._read_skill_meta_for_mount(item, skill_id, user_info)
             if not is_skill_enabled(meta):
                 logger.warning(
                     "[Skills] 技能 %s 已被禁用（enabled=false），本轮回合不再挂载", skill_id
@@ -330,21 +343,33 @@ class SkillInjector:
         return kept
 
     @staticmethod
-    def _read_skill_meta_for_mount(item: Dict[str, Any], skill_id: str) -> Dict[str, Any]:
-        """为挂载项读取磁盘 frontmatter（个人技能优先，其次公共技能库），失败返回空字典。"""
+    def _read_skill_meta_for_mount(
+        item: Dict[str, Any],
+        skill_id: str,
+        user_info: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """为挂载项读取磁盘 frontmatter（个人技能优先，其次公共技能库），失败返回空字典。
+
+        来源判定走 :func:`is_personal_skill_attachment`：scope 可能只写在附件顶层
+        （``ChatFile.scope``，聊天接口已补回该字段），也可能只写在 ``skillMeta`` 里，
+        两处都要认。此前只看顶层，个人技能会被当成公共技能去读平台库的同名 SKILL.md。
+
+        个人目录由用户身份推导（``user_info`` 优先，其次请求上下文 ``current_user_info``）：
+        早先这里从 ``app.core.context`` 导入 ``current_user_info``，而那个模块没有这个名字，
+        ImportError 被下面的 except 吞掉——个人技能这条分支从未真正读过盘。
+        """
         from app.utils.skill_metadata import parse_skill_frontmatter
 
-        scope = str(item.get("scope") or "").strip().lower()
         candidates: List[str] = []
-        if scope == "personal":
+        if is_personal_skill_attachment(item):
             try:
-                from app.core.context import current_user_info
                 from app.services.ai.skill_resolver import (
                     get_user_personal_skills_dir,
                     resolve_personal_skill_dir,
                 )
+                from app.utils.context import current_user_info
 
-                personal_dir = get_user_personal_skills_dir(current_user_info.get())
+                personal_dir = get_user_personal_skills_dir(user_info or current_user_info.get())
                 if personal_dir:
                     resolved = resolve_personal_skill_dir(personal_dir, skill_id)
                     candidates.append(
@@ -398,6 +423,13 @@ class SkillInjector:
                     "type": "skill",
                     "url": str(item["id"]),
                     "filename": item.get("name") or str(item["id"]),
+                    # 会话固定资源（resource_scope.skills）也带来源标记，且必须**显式**抬到附件
+                    # 顶层：下游（drop_forbidden_skill_items / _read_skill_meta_for_mount /
+                    # 挂载正文解析）都按 scope 决定"这份技能属于谁"。丢了这一层，与公共技能
+                    # 同名的个人技能会被公共禁用集合连坐、并按公共库去解析 id。
+                    "scope": normalize_skill_scope(
+                        item.get("scope"), source="resource_scope.skills.scope"
+                    ),
                     "skillMeta": item,
                 }
                 for item in scoped_skill_items
@@ -417,7 +449,7 @@ class SkillInjector:
         # enabled=false 在这条路上也必须拦。显式挂载（输入框技能 chip）与会话固定资源
         # （resource_scope.skills，服务端持久化、跨轮生效）都不经过扫描侧的门禁：
         # 少了这一道，「管理页点禁用」对已挂载/已固定的会话完全无效，正文照旧整份注入。
-        active_skills = cls.drop_disabled_skill_items(active_skills)
+        active_skills = cls.drop_disabled_skill_items(active_skills, user_info)
 
         mounted_skill_ids = {s.get("url") for s in active_skills if s.get("url")}
         skills_injection = []
@@ -441,7 +473,9 @@ class SkillInjector:
                 if meta_override and isinstance(meta_override, dict):
                     skill_name = str(meta_override.get("name") or skill_id)
                     description = str(meta_override.get("description") or "")
-                    skill_scope = str(meta_override.get("scope") or "").strip().lower() or None
+                    skill_scope = normalize_skill_scope(
+                        meta_override.get("scope"), source="skillMeta.scope"
+                    )
                     explicit_skill_md_path = meta_override.get("skill_md_path") or meta_override.get(
                         "skillMdPath"
                     )
@@ -449,7 +483,17 @@ class SkillInjector:
                     skill_name = skill_obj.get("filename", skill_id).replace(" (技能)", "")
                     description = ""
 
-                skill_scope = skill_scope or str(skill_obj.get("scope") or "").strip().lower() or None
+                # 顶层附件字段是历史消息里更稳的那一份（skillMeta 可能被前端裁剪过），
+                # 两处都归一化到同一套取值，避免"scope 只写在某一层时被判成公共技能"。
+                skill_scope = skill_scope or normalize_skill_scope(
+                    skill_obj.get("scope"), source="ChatFile.scope"
+                )
+                # 但传给读取器（load_skill_md_content）的 scope 只保留"个人"标记：它把
+                # "非空且非 personal"的 scope 当成过滤条件（meta.scope 不等就跳过候选），
+                # 而公共技能在 meta 里的口径写作 "global"，直接把 "public" 透传会把
+                # meta_path 候选全部过滤掉。既有调用点（点名/扫描路径）传的也是 global 或
+                # personal，这里按"个人 or 未指定"折算，保持与改动前完全一致的读取行为。
+                read_scope = skill_scope if is_personal_skill_scope(skill_scope) else None
                 candidate_paths: list[str] = []
                 if explicit_skill_md_path:
                     candidate_paths.append(str(explicit_skill_md_path))
@@ -499,7 +543,7 @@ class SkillInjector:
                         skill_id,
                         max_bytes=int(full_load_policy["max_bytes"]),
                         user_info=user_info,
-                        scope=skill_scope,
+                        scope=read_scope,
                         skill_md_path=skill_md_path if os.path.exists(skill_md_path) else None,
                     )
                     if full_instruction:

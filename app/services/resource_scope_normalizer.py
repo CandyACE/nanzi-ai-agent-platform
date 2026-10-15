@@ -31,8 +31,10 @@ async def normalize_resource_scope_for_user(
     from app.core.config import settings
     from app.services.ai.skill_resolver import get_user_personal_skills_dir
     from app.services.permission_service import PermissionService
-    from app.api.portal.endpoints.skills import parse_skill_metadata
-    from app.utils.skill_metadata import is_skill_enabled
+    # 直接依赖唯一解析器，不再反向 import 端点模块（此处曾 import
+    # app.api.portal.endpoints.skills.parse_skill_metadata，服务层依赖 API 层会把整棵
+    # 路由依赖拖进资源收敛路径，也让「解析口径」多绕一层）
+    from app.utils.skill_metadata import is_skill_enabled, parse_skill_frontmatter
     from sqlalchemy import and_, select
     from sqlalchemy.orm import joinedload
 
@@ -133,7 +135,7 @@ async def normalize_resource_scope_for_user(
             skill_md = os.path.join(skill_dir, "SKILL.md")
             if not os.path.isdir(skill_dir) or not os.path.isfile(skill_md):
                 continue
-            meta = parse_skill_metadata(skill_id, skill_md)
+            meta = parse_skill_frontmatter(skill_id, skill_md)
             if not is_skill_enabled(meta):
                 continue
             skill_by_token[(scope_name, skill_id.casefold())] = {

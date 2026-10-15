@@ -47,6 +47,32 @@ interface PublicationReviewItem {
   file_tree?: FileNode[]
 }
 
+/**
+ * 已发布（PUBLISHED）的发布记录，用于「已发布 / 下架管理」。
+ *
+ * 与审核队列的关键区别：审核队列是**待审版本**，这里是**已上线版本**；一条已发布记录
+ * 对应技能库里真实对全员可见的那份快照，下架即回收它的可见性。
+ */
+interface PublishedPublication {
+  publication_id: string
+  version_id: string
+  skill_id: string
+  platform_skill_id?: string | null
+  name: string
+  description?: string
+  publication_status?: string
+  version_number?: number | null
+  source_user_id?: number | null
+  submitted_by?: number | null
+  published_at?: string | null
+  reviewed_by?: number | null
+  file_count?: number
+  total_size?: number
+}
+
+/** 技能工作台的视图分区：global=平台技能、personal=我的技能、review=待审核、publications=已发布（下架管理）。 */
+type WorkspaceTab = 'global' | 'personal' | 'review' | 'publications'
+
 interface BoundAgent {
   id: string
   name: string
@@ -103,18 +129,36 @@ const restoreSkillFlowGuide = () => {
 
 const activeHelpTab = ref<'flow' | 'schema' | 'audit'>('flow')
 
+const { hasPermission } = useUser()
+const canManagePlatformSkills = computed(() => hasPermission('element:skills:admin'))
+
+/**
+ * 是否可以使用「平台技能 / 待审核 / 已发布」这三个平台管理视图。
+ *
+ * 个人技能页（`personalOnly`，个人中心与嵌入式个人资源面板）下 tab bar 整体是
+ * `v-if="!personalOnly"`，平台侧视图只靠 `canManagePlatformSkills` 渲染；越界切过去
+ * 的结果是技能列表（`showSkillList`）与目标面板一起消失，页面看起来「坏了」。
+ * 因此所有切到平台视图的入口都必须先过这道闸。
+ */
+const canAccessPlatformWorkspace = computed(() => !props.personalOnly && canManagePlatformSkills.value)
+
 const handleSkillBannerAction = (type: 'create' | 'review' | 'global') => {
   if (type === 'create') {
     openCreateModal()
-  } else if (type === 'review') {
+    return
+  }
+  // 守卫：个人技能页 / 无平台技能管理权限时不得切到不可见的平台视图，给出可见反馈而非静默失效
+  if (!canAccessPlatformWorkspace.value) {
+    showToast('「待审核 / 平台技能」仅平台技能管理员可用，个人技能页不提供该入口', 'warning')
+    return
+  }
+  if (type === 'review') {
     activeWorkspaceTab.value = 'review'
   } else if (type === 'global') {
     activeWorkspaceTab.value = 'global'
     activeScope.value = 'global'
   }
 }
-const { hasPermission } = useUser()
-const canManagePlatformSkills = computed(() => hasPermission('element:skills:admin'))
 
 const confirmState = ref({
   show: false,
@@ -126,10 +170,32 @@ const confirmState = ref({
 
 const skills = ref<Skill[]>([])
 const personalSkills = ref<Skill[]>([])
-const initialWorkspaceTab = props.personalOnly || !canManagePlatformSkills.value ? 'personal' : 'global'
+/** 首屏落点：只有能用平台管理视图的用户才落到「平台技能」，否则一律落到「我的技能」。 */
+const resolveInitialWorkspaceTab = (): 'global' | 'personal' =>
+  canAccessPlatformWorkspace.value ? 'global' : 'personal'
+const initialWorkspaceTab = resolveInitialWorkspaceTab()
 const activeScope = ref<'global' | 'personal'>(initialWorkspaceTab)
-const activeWorkspaceTab = ref<'global' | 'personal' | 'review'>(initialWorkspaceTab)
+const activeWorkspaceTab = ref<WorkspaceTab>(initialWorkspaceTab)
 const loading = ref(false)
+
+/** 技能列表只在「平台技能 / 我的技能」两个视图渲染；待审核与已发布是并列的独立面板。 */
+const showSkillList = computed(() => activeWorkspaceTab.value === 'global' || activeWorkspaceTab.value === 'personal')
+
+/**
+ * 兜底：权限或 `personalOnly` 变化后，若当前停在已不可见的平台视图上，立即退回「我的技能」。
+ *
+ * `hasPermission` 依赖用户信息异步注入，`canManagePlatformSkills` 可能在挂载后才确定；
+ * 少了这道兜底，用户会停在一个既不渲染列表、也不渲染目标面板的空页面上。
+ */
+watch(canAccessPlatformWorkspace, (available) => {
+  if (available) return
+  if (activeWorkspaceTab.value !== 'personal') {
+    activeWorkspaceTab.value = 'personal'
+  }
+  if (activeScope.value !== 'personal') {
+    activeScope.value = 'personal'
+  }
+})
 
 /** 列表类请求的并发计数：并发加载时避免先完成的一方提前结束 loading */
 let listLoadingCount = 0
@@ -382,6 +448,16 @@ const publicationReviewFilePath = ref('SKILL.md')
 const publicationReviewFileContent = ref('')
 const publicationReviewFileLoading = ref(false)
 
+// 已发布（上线中）的发布记录 + 下架管理
+const publications = ref<PublishedPublication[]>([])
+const publicationsLoading = ref(false)
+/** 正在等待填写下架原因的记录：非空即表示「下架原因」弹窗打开。 */
+const revokeTarget = ref<PublishedPublication | null>(null)
+const revokeComment = ref('')
+const revokeSubmitting = ref(false)
+//: 下架原因长度上限，与弹窗 maxlength 保持一致
+const REVOKE_COMMENT_MAX = 200
+
 // 获取平台技能列表
 const fetchSkills = async () => {
   beginListLoading()
@@ -473,6 +549,7 @@ const fetchPublicationQueue = async (silent = false) => {
 }
 
 const openPublicationReview = async () => {
+  if (!canAccessPlatformWorkspace.value) return
   activeWorkspaceTab.value = 'review'
   activeScope.value = 'global'
   await fetchPublicationQueue()
@@ -481,6 +558,116 @@ const openPublicationReview = async () => {
 const closePublicationReview = () => {
   activeWorkspaceTab.value = 'global'
   activeScope.value = 'global'
+}
+
+// ---------------------------------------------------------------------------
+// 已发布 / 下架管理
+// ---------------------------------------------------------------------------
+
+/**
+ * 拉取「已发布」列表：一条记录就是一个已上线的版本，可被下架。
+ *
+ * `silent` 供首屏预取使用（tab 上的数量角标）：与审核队列不同，这里的失败不该在用户
+ * 还没进入该分区时就弹错。
+ */
+const fetchPublications = async (silent = false) => {
+  publicationsLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/skills/publications')
+    if (response.data?.status === 'success') {
+      publications.value = response.data.data?.items || []
+    } else if (!silent) {
+      showToast(response.data?.message || '获取已发布技能列表失败', 'error')
+    }
+  } catch (e: any) {
+    if (!silent) {
+      showToast(e.response?.data?.detail || '获取已发布技能列表失败', 'error')
+    }
+  } finally {
+    publicationsLoading.value = false
+  }
+}
+
+/** 打开「已发布 / 下架管理」分区（仅平台技能管理员，个人技能页不可达）。 */
+const openPublications = async () => {
+  if (!canAccessPlatformWorkspace.value) {
+    showToast('「已发布 / 下架管理」仅平台技能管理员可用', 'warning')
+    return
+  }
+  activeWorkspaceTab.value = 'publications'
+  activeScope.value = 'global'
+  await fetchPublications()
+}
+
+const closePublications = () => {
+  activeWorkspaceTab.value = 'global'
+  activeScope.value = 'global'
+}
+
+/**
+ * 第一步：确认弹窗。下架会立即收回该版本对全体用户的可见性，属于不可轻率的线上操作，
+ * 因此先让用户确认影响面，再要求填写原因（原因会写入发布记录，供事后追溯）。
+ */
+const startRevokePublication = (item: PublishedPublication) => {
+  confirmState.value = {
+    show: true,
+    title: '下架已发布技能',
+    message: `确定下架「${item.name || item.skill_id}」的已发布版本 v${item.version_number ?? '—'} 吗？\n下架后该版本立即不再对用户可见；个人源技能与历史发布记录会保留，可重新提审发布。`,
+    type: 'danger',
+    onConfirm: () => {
+      confirmState.value.show = false
+      revokeTarget.value = item
+      revokeComment.value = ''
+    },
+  }
+}
+
+const cancelRevokePublication = () => {
+  if (revokeSubmitting.value) return
+  revokeTarget.value = null
+  revokeComment.value = ''
+}
+
+/**
+ * 第二步：强制填写下架原因后再提交。
+ *
+ * 原因必填（后端 422 也会校验），空原因就地给出可见提示并**保持弹窗打开**，避免
+ * 用户以为已经提交成功。
+ */
+const submitRevokePublication = async () => {
+  const target = revokeTarget.value
+  if (!target || revokeSubmitting.value) return
+  const comment = revokeComment.value.trim()
+  if (!comment) {
+    showToast('请填写下架原因（必填）', 'warning')
+    return
+  }
+  revokeSubmitting.value = true
+  try {
+    const response = await axios.post(`/api/portal/skills/publications/${target.version_id}/revoke`, { comment })
+    if (response.data?.status !== 'success') {
+      showToast(response.data?.message || '下架技能失败', 'error')
+      return
+    }
+    // 下架会让公共技能目录真的消失，因此后端会同步清理智能体白名单与会话挂载引用，
+    // 并把清理不了的项放进 warnings——与重命名/删除同一风格，必须如实展示。
+    const { syncedCount, warnings } = summarizeReferenceSync(response.data?.data)
+    showToast(
+      warnings.length
+        ? `已下架「${target.name || target.skill_id}」v${target.version_number ?? '—'}：已同步 ${syncedCount} 处引用；有 ${warnings.length} 条警告——${warnings.join('；')}`
+        : `已下架「${target.name || target.skill_id}」v${target.version_number ?? '—'}：已同步 ${syncedCount} 处引用`,
+      warnings.length ? 'error' : 'success',
+    )
+    revokeTarget.value = null
+    revokeComment.value = ''
+    // 下架后平台技能清单也会随之变化（版本下线），一并刷新避免「平台技能」页残留旧数据
+    await Promise.all([fetchPublications(), fetchSkills()])
+  } catch (e: any) {
+    // 422（原因为空）/ 404（记录不存在）/ 409（已下架或不是当前版本）都要让用户看到后端原因
+    showToast(e.response?.data?.detail || '下架技能失败', 'error')
+  } finally {
+    revokeSubmitting.value = false
+  }
 }
 
 const openPublicationReviewDetail = async (versionId: string) => {
@@ -632,6 +819,20 @@ const formatModifiedAt = (ts?: number) => {
   })
 }
 
+/** 已发布记录的发布时间：后端下发 ISO 字符串（不是秒级时间戳，不能复用 formatModifiedAt）。 */
+const formatPublishedAt = (value?: string | null) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 const isSearchEmpty = computed(() => {
   return searchQuery.value.trim().length > 0 && sortedSkills.value.length === 0
 })
@@ -758,6 +959,20 @@ const exportSkill = async (skillId: string, scope?: 'global' | 'personal') => {
 const renameDialog = ref<{ skillId: string; scope: 'global' | 'personal'; draft: string } | null>(null)
 const renameSubmitting = ref(false)
 
+/**
+ * 把后端的引用同步报告压成「同步了几处 + 几条警告」。
+ *
+ * `synced` 是后端按引用类别给出的成功条数（重命名：agents / publications / conversations；
+ * 删除：解除绑定与挂载清理），`warnings` 是未能同步的具体说明。两者都必须让用户看到，
+ * 否则「技能还在但哪都挂不上」这种断链会悄无声息。
+ */
+const summarizeReferenceSync = (data: any): { syncedCount: number; warnings: string[] } => {
+  const synced = data?.synced || {}
+  const syncedCount = Object.values(synced).reduce<number>((sum, value) => sum + (Number(value) || 0), 0)
+  const warnings = Array.isArray(data?.warnings) ? (data?.warnings as string[]) : []
+  return { syncedCount, warnings }
+}
+
 /** 打开重命名弹窗（用 InputModal 而非浏览器原生弹窗：原生弹窗阻塞主线程且无法跟主题一致）。 */
 const renameSkill = (skillId: string, scope?: 'global' | 'personal') => {
   renameDialog.value = { skillId, scope: scope === 'personal' ? 'personal' : 'global', draft: skillId }
@@ -768,19 +983,34 @@ const submitRename = async () => {
   const target = renameDialog.value
   if (!target || renameSubmitting.value) return
   const newSkillId = target.draft.trim()
-  if (!newSkillId || newSkillId === target.skillId) {
+  // 空 ID 与非法 ID 都在本地就地拦下并给出可见提示（弹窗保持打开），
+  // 否则用户点完「确定」什么都没发生，只能自己猜哪里错了。
+  if (!newSkillId) {
+    showToast('技能 ID 不能为空', 'warning')
+    return
+  }
+  if (newSkillId === target.skillId) {
     renameDialog.value = null
+    return
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(newSkillId)) {
+    showToast('技能 ID 仅支持英文、数字、中划线和下划线', 'warning')
     return
   }
   renameSubmitting.value = true
   try {
     const apiPrefix = resolveSkillApiPrefix(target.skillId, target.scope)
     const response = await axios.put(`${apiPrefix}/${target.skillId}/rename`, { new_skill_id: newSkillId })
-    const warnings: string[] = response.data?.data?.warnings || []
+    if (response.data?.status !== 'success') {
+      // 信封不是 success 时不能再报「已重命名」，否则用户会以为改成功了
+      showToast(response.data?.message || '重命名失败', 'error')
+      return
+    }
+    const { syncedCount, warnings } = summarizeReferenceSync(response.data?.data)
     showToast(
       warnings.length
-        ? `已重命名为 ${newSkillId}，但部分引用未同步：${warnings.join('；')}`
-        : `已重命名为 ${newSkillId}`,
+        ? `已重命名为 ${newSkillId}：已同步 ${syncedCount} 处引用；有 ${warnings.length} 条警告——${warnings.join('；')}`
+        : `已重命名为 ${newSkillId}：已同步 ${syncedCount} 处引用`,
       warnings.length ? 'error' : 'success',
     )
     if (activeSkillId.value === target.skillId) {
@@ -807,7 +1037,15 @@ const deleteSkill = (skillId: string) => {
         const apiPrefix = isPersonal ? '/api/portal/skills/personal' : '/api/portal/skills'
         const response = await axios.delete(`${apiPrefix}/${skillId}`)
         if (response.data && response.data.status === 'success') {
-          showToast(`技能 ${skillId} 已成功物理删除`, 'success')
+          // 与重命名同理：删除也要解除智能体绑定 / 会话挂载 / 发布血缘引用，
+          // 后端把未清理成功的项放进 warnings，必须如实展示而不是只报「已删除」。
+          const { syncedCount, warnings } = summarizeReferenceSync(response.data?.data)
+          showToast(
+            warnings.length
+              ? `技能 ${skillId} 已删除：已同步 ${syncedCount} 处引用；有 ${warnings.length} 条警告——${warnings.join('；')}`
+              : `技能 ${skillId} 已成功物理删除，已同步 ${syncedCount} 处引用`,
+            warnings.length ? 'error' : 'success',
+          )
           if (isPersonal) {
             fetchPersonalSkills()
           } else {
@@ -816,6 +1054,8 @@ const deleteSkill = (skillId: string) => {
           if (activeSkillId.value === skillId) {
             showDrawer.value = false
           }
+        } else {
+          showToast(response.data?.message || '注销技能失败', 'error')
         }
       } catch (e: any) {
         showToast(e.response?.data?.detail || '注销技能失败', 'error')
@@ -836,6 +1076,9 @@ const toggleSkillStatus = async (skill: Skill) => {
     if (response.data && response.data.status === 'success') {
       skill.enabled = newStatus
       showToast(`技能已${newStatus === 'true' ? '启用' : '禁用'}`, 'success')
+    } else {
+      // 信封不是 success 时此前完全静默：开关弹回去了，用户却不知道为什么
+      showToast(response.data?.message || '更新技能状态失败', 'error')
     }
   } catch (e: any) {
     showToast(e.response?.data?.detail || '更新技能状态失败', 'error')
@@ -1515,6 +1758,8 @@ onMounted(() => {
     fetchSkills()
     fetchSkillBindings()
     fetchPublicationQueue(true)
+    // 静默预取已发布列表：只为了让「已发布」tab 的数量角标在进入前就是准确的
+    fetchPublications(true)
   }
   fetchPersonalSkills().then(() => {
     const targetId = String(props.initialSkillId || '').trim()
@@ -1592,7 +1837,7 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div v-if="activeWorkspaceTab !== 'review'" class="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div v-if="showSkillList" class="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div class="relative min-w-0 flex-1">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1734,6 +1979,7 @@ onUnmounted(() => {
     <!-- 技能工作台全生命周期指引横幅 -->
     <div v-if="showSkillFlowGuide" class="flex-shrink-0">
       <SkillFlowGuideBanner
+        :platform-workspace-available="canAccessPlatformWorkspace"
         @action="handleSkillBannerAction"
         @close="handleCloseSkillFlowGuide"
         @dismiss="handleDismissSkillFlowGuide"
@@ -1781,10 +2027,91 @@ onUnmounted(() => {
         待审核
         <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'review' ? 'bg-indigo-100 text-indigo-700' : publicationQueue.length ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'">{{ publicationQueue.length }}</span>
       </button>
+      <button
+        v-if="canManagePlatformSkills"
+        id="tab-skill-publications"
+        type="button"
+        @click="openPublications"
+        class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
+        :class="activeWorkspaceTab === 'publications' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+        </svg>
+        已发布
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'publications' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'">{{ publications.length }}</span>
+      </button>
+    </div>
+
+    <!-- 已发布 / 下架管理面板：一条记录 = 一个已上线的版本，下架即回收其可见性 -->
+    <div v-if="activeWorkspaceTab === 'publications' && canAccessPlatformWorkspace" class="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
+      <div class="mb-4 flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
+        <div>
+          <h2 class="text-lg font-bold text-gray-900">已发布 / 下架管理</h2>
+          <p class="mt-1 text-xs text-gray-500">这里列出已上线到平台技能库的版本；下架会收回该版本对全体用户的可见性，个人源技能与历史发布记录保留。</p>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-50"
+            :disabled="publicationsLoading"
+            @click="fetchPublications()"
+          >
+            刷新
+          </button>
+          <button type="button" class="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" @click="closePublications">
+            返回平台技能
+          </button>
+        </div>
+      </div>
+
+      <div v-if="publicationsLoading" class="py-8 text-center text-sm text-gray-400">加载已发布技能...</div>
+      <div v-else-if="publications.length === 0" class="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
+        当前没有已发布的平台技能版本
+      </div>
+      <div v-else class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 text-left">
+          <thead class="bg-gray-50/70 text-xs font-bold text-gray-500 uppercase tracking-wider select-none">
+            <tr>
+              <th class="px-4 py-3">技能名称与描述</th>
+              <th class="px-4 py-3 text-center">版本</th>
+              <th class="px-4 py-3 text-center">平台技能 ID</th>
+              <th class="px-4 py-3 text-center">文件</th>
+              <th class="px-4 py-3 text-center">发布时间</th>
+              <th class="px-4 py-3 text-center">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 text-sm">
+            <tr v-for="item in publications" :key="item.version_id" class="transition-colors hover:bg-purple-50/20">
+              <td class="px-4 py-3">
+                <div class="font-bold text-gray-900">{{ item.name || item.skill_id }}</div>
+                <div class="mt-0.5 max-w-2xl text-xs text-gray-500 line-clamp-2" :title="item.description">{{ item.description || '暂无描述' }}</div>
+                <div class="mt-0.5 font-mono text-[10px] text-gray-400">来源个人技能 {{ item.skill_id }}</div>
+              </td>
+              <td class="px-4 py-3 text-center whitespace-nowrap">
+                <span class="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">v{{ item.version_number ?? '—' }}</span>
+                <div class="mt-1 text-[10px] font-semibold text-emerald-600">已发布</div>
+              </td>
+              <td class="px-4 py-3 text-center font-mono text-xs text-gray-500">{{ item.platform_skill_id || '—' }}</td>
+              <td class="px-4 py-3 text-center text-xs text-gray-500 whitespace-nowrap">{{ item.file_count ?? 0 }} 个</td>
+              <td class="px-4 py-3 text-center text-xs text-gray-500 whitespace-nowrap">{{ formatPublishedAt(item.published_at) }}</td>
+              <td class="px-4 py-3 text-center whitespace-nowrap">
+                <button
+                  type="button"
+                  class="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+                  @click="startRevokePublication(item)"
+                >
+                  下架
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 管理员发布审核面板 -->
-    <div v-if="activeWorkspaceTab === 'review' && !personalOnly && canManagePlatformSkills" class="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
+    <div v-if="activeWorkspaceTab === 'review' && canAccessPlatformWorkspace" class="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
         <div>
           <h2 class="text-lg font-bold text-gray-900">发布审核</h2>
@@ -1871,7 +2198,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <template v-if="activeWorkspaceTab !== 'review'">
+    <template v-if="showSkillList">
     <!-- 技能列表网格 -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16">
       <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
@@ -2332,12 +2659,14 @@ onUnmounted(() => {
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
                          <button
+                            v-if="canAccessPlatformWorkspace"
                             type="button"
-                            @click="showHelpModal = false; activeWorkspaceTab = 'review'"
+                            @click="showHelpModal = false; handleSkillBannerAction('review')"
                             class="text-xs text-amber-600 hover:text-amber-800 font-bold cursor-pointer"
                          >
                             前往待审核 &rarr;
                          </button>
+                         <span v-else class="text-[11px] text-gray-400">仅平台技能管理员可访问「待审核」</span>
                       </div>
                    </div>
 
@@ -2354,12 +2683,14 @@ onUnmounted(() => {
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
                          <button
+                            v-if="canAccessPlatformWorkspace"
                             type="button"
-                            @click="showHelpModal = false; activeWorkspaceTab = 'global'; activeScope = 'global'"
+                            @click="showHelpModal = false; handleSkillBannerAction('global')"
                             class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
                          >
                             平台技能 &rarr;
                          </button>
+                         <span v-else class="text-[11px] text-gray-400">仅平台技能管理员可访问「平台技能」</span>
                       </div>
                    </div>
 
@@ -2376,12 +2707,14 @@ onUnmounted(() => {
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
                          <button
+                            v-if="canAccessPlatformWorkspace"
                             type="button"
                             @click="showHelpModal = false; router.push('/dashboard/agent-management')"
                             class="text-xs text-teal-600 hover:text-teal-800 font-medium cursor-pointer"
                          >
                             前往智能体中心 &rarr;
                          </button>
+                         <span v-else class="text-[11px] text-gray-400">智能体中心需要平台管理权限</span>
                       </div>
                    </div>
                 </div>
@@ -3263,6 +3596,22 @@ onUnmounted(() => {
     @update:model-value="renameDialog.draft = $event"
     @confirm="submitRename"
     @cancel="renameDialog = null"
+  />
+
+  <!-- 下架原因（必填）：先经 ConfirmModal 确认影响面，再强制填写原因后提交 -->
+  <InputModal
+    v-if="revokeTarget"
+    :title="`下架「${revokeTarget.name || revokeTarget.skill_id}」v${revokeTarget.version_number ?? '—'}`"
+    message="下架后该版本立即不再对用户可见，原因会记录在发布记录中供追溯。"
+    :model-value="revokeComment"
+    :loading="revokeSubmitting"
+    :maxlength="REVOKE_COMMENT_MAX"
+    placeholder="请填写下架原因（必填）"
+    hint="原因必填，例如：内容有误 / 存在安全风险 / 已被新版本取代。"
+    confirm-text="确认下架"
+    @update:model-value="revokeComment = $event"
+    @confirm="submitRevokePublication"
+    @cancel="cancelRevokePublication"
   />
 
   <!-- 右键菜单 -->

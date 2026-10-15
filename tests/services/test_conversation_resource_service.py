@@ -2,10 +2,47 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.conversation_resource_service import ConversationResourceService
+from app.services.conversation_resource_service import (
+    TTL_SECONDS,
+    ConversationResourceService,
+    MountSyncUnavailable,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.mark.asyncio
+async def test_replace_writes_the_shared_thirty_day_ttl():
+    """TTL 必须是共享常量，且真的传给了 Redis（此前重命名链路漏了 ex）。"""
+    redis = AsyncMock()
+    with patch("app.services.conversation_resource_service.get_redis", new_callable=AsyncMock, return_value=redis):
+        await ConversationResourceService.replace(7, "conv-1", {"skills": [{"id": "s"}]})
+
+    assert TTL_SECONDS == 2592000
+    assert ConversationResourceService.TTL_SECONDS == TTL_SECONDS
+    assert redis.set.await_args.kwargs["ex"] == TTL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_rewrite_skill_mounts_raises_when_redis_unavailable_in_strict_mode():
+    """删除/下架链路需要知道「这一处没同步」，不能被混进「改了 0 个会话」。"""
+    with patch(
+        "app.services.conversation_resource_service.get_redis",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("redis down"),
+    ):
+        with pytest.raises(MountSyncUnavailable):
+            await ConversationResourceService.rewrite_skill_mounts(
+                skill_id="gone", strict_unavailable=True
+            )
+        # 重命名链路保持历史语义：静默降级为 0
+        assert (
+            await ConversationResourceService.rewrite_skill_mounts(
+                skill_id="gone", new_skill_id="new"
+            )
+            == 0
+        )
 
 
 @pytest.mark.asyncio

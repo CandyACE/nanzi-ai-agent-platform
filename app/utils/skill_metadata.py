@@ -1,9 +1,12 @@
 """SKILL.md Frontmatter 解析与技能附件隐式指令构建。"""
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n"
 
@@ -247,12 +250,64 @@ def _skill_attachment_id(item: Any) -> str:
     return str(item.get("url") or "").strip()
 
 
+# 技能来源口径（scope）的唯一取值。前端技能 chip 与 ``resource_scope`` 用
+# ``global``/``personal``（对应 ``skill_resolver.SCOPE_GLOBAL/SCOPE_PERSONAL``），
+# 历史载荷与文档里还出现过同义的 ``public``，这里一并认。
+SKILL_SCOPE_PERSONAL = "personal"
+SKILL_SCOPE_PUBLIC = "public"
+_PERSONAL_SCOPE_ALIASES = frozenset({"personal"})
+_PUBLIC_SCOPE_ALIASES = frozenset({"public", "global", "platform"})
+
+
+def normalize_skill_scope(raw: Any, *, source: str = "") -> Optional[str]:
+    """技能来源标记的**唯一**解析入口：``"personal"`` / ``"public"`` / ``None``（未指定）。
+
+    为什么需要这一层：
+    - 前端 ``EmbedChat.handleSelectSkill`` 把 scope 同时写进附件与 ``skillMeta``，取值是
+      ``global``/``personal``；聊天接口又用 ``msg.model_dump()`` 把它带回服务端；
+    - 历史载荷/文档里还有 ``public`` 这种同义写法，个人侧只认 ``personal``；
+    - scope 决定"这一份技能属于谁"（个人技能按个人库解析、且永不属于公共禁用集合），
+      因此任何**未知取值都按未指定处理**（等同公共口径）而绝不抛异常：它来自客户端载荷，
+      不能因为一个拼错的值让整轮对话 500。
+
+    ``source`` 只用于日志定位（如 ``ChatFile.scope``）；未知取值记 warning，便于发现契约漂移。
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+    if text in _PERSONAL_SCOPE_ALIASES:
+        return SKILL_SCOPE_PERSONAL
+    if text in _PUBLIC_SCOPE_ALIASES:
+        return SKILL_SCOPE_PUBLIC
+    logger.warning(
+        "[SkillScope] 未知技能 scope=%r（来源：%s），按未指定（公共口径）处理",
+        raw,
+        source or "unknown",
+    )
+    return None
+
+
+def is_personal_skill_scope(raw: Any) -> bool:
+    """scope 是否指向个人技能（唯一判定来源：:func:`normalize_skill_scope`）。
+
+    只认 ``personal``：其余取值（``global``/``public``/未知/缺省）都是公共口径。
+    这样即使载荷写错，方向也是"当成公共技能"（既有行为），不会误把公共技能当个人技能放行。
+    """
+    return normalize_skill_scope(raw) == SKILL_SCOPE_PERSONAL
+
+
 def is_personal_skill_attachment(item: Any) -> bool:
     """挂载项是否指向**个人技能**（个人技能与公共技能可能同名）。
 
     公开出来给 `services.ai.skills.policy` 复用：两处过滤（上下文清洗、显式挂载丢弃）
     必须同口径——只禁公共技能，同名个人技能不连坐。曾经因为各写一份，显式挂载那条
     漏了 scope 判定，同名个人技能被静默丢弃。
+
+    scope 可能出现在附件顶层（``ChatFile.scope``）或 ``skillMeta``/``skill_meta`` 里
+    （前端两处都发，历史消息不一定），因此两处都看；判定统一走
+    :func:`is_personal_skill_scope`，不在这里再写一份字符串比较。
     """
     if not isinstance(item, dict):
         return False
@@ -260,7 +315,7 @@ def is_personal_skill_attachment(item: Any) -> bool:
     meta = item.get("skillMeta") or item.get("skill_meta")
     if isinstance(meta, dict):
         scopes.append(meta.get("scope"))
-    return any(str(scope or "").strip().lower() == "personal" for scope in scopes)
+    return any(is_personal_skill_scope(scope) for scope in scopes)
 
 
 def _legacy_hint_display_name(line: str, skill_id: str) -> str:
@@ -387,6 +442,10 @@ def sanitize_forbidden_skill_context(
 
     个人技能（scope=personal）不受影响：产品口径是"禁的是平台发布的那一份"，
     用户自建的同名技能照旧可用，因此同名 id 先按 scope 排除再算禁用集合。
+    "哪些附件属于个人技能"依据 :func:`is_personal_skill_attachment`（顶层 ``scope`` 与
+    ``skillMeta.scope`` 两处都看，取值由 :func:`normalize_skill_scope` 归一），
+    与 `services.ai.skills.policy.drop_forbidden_skill_items` 同一判定——两处若各写一套，
+    显式挂载那条就会漏掉 scope 判定、把同名个人技能静默丢掉。
     """
     forbidden = {
         str(skill_id).strip()

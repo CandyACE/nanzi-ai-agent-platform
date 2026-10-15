@@ -19,7 +19,12 @@ from app.services.ai.skill_resolver import (
     iter_personal_skill_dirs,
     resolve_personal_skill_dir,
 )
-from app.services.skill_rename_service import SkillRenameError, rename_skill
+from app.services.skill_rename_service import (
+    SkillRenameError,
+    remove_skill_references,
+    rename_skill,
+    validate_skill_id,
+)
 from app.services.skill_publication_service import (
     PublicationConflictError,
     PublicationNotFoundError,
@@ -64,11 +69,16 @@ def _validate_personal_skill_path(
     skill_id: str,
     relative_path: str = "",
 ) -> str:
-    """校验 skill_id 和可选的 relative_path，防御路径穿越攻击，返回绝对路径。"""
-    if not skill_id or "/" in skill_id or "\\" in skill_id or ".." in skill_id:
-        raise HTTPException(status_code=400, detail="非法个人技能 ID 格式")
-    if not re.match(r"^[a-zA-Z0-9_-]+$", skill_id):
-        raise HTTPException(status_code=400, detail="技能 ID 只能包含字母、数字、下划线和连字符")
+    """校验 skill_id 和可选的 relative_path，防御路径穿越攻击，返回绝对路径。
+
+    ID 的格式/长度/保留字校验收敛到 :func:`skill_rename_service.validate_skill_id`
+    （与平台技能同一份实现）：此前这里只有 ``^[a-zA-Z0-9_-]+$``，既没有 128 长度上限
+    （超长 ID 落库到 ``VARCHAR(128)`` 的发布血缘列会被截断/报错），也不挡保留字。
+    """
+    try:
+        skill_id = validate_skill_id(skill_id)
+    except SkillRenameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     skills_root = os.path.abspath(_get_personal_skills_root(user_info))
     # 存量技能可能位于历史遗留的 .seed 布局下（K8s 未修复期的产物）：先定位真实
@@ -509,13 +519,31 @@ async def delete_personal_skill_file(
 async def delete_personal_skill(
     skill_id: str,
     user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
 ):
+    """彻底删除个人技能目录，并清理会话挂载里的引用。
+
+    个人技能同样会被挂进会话（Redis ``resource_scope_v1.skills``，带 30 天 TTL）：只删目录
+    不清理，用户下次打开历史会话会看到一个指向不存在技能的空 chip。发布血缘**不在这里
+    处理**：个人副本删掉不影响已经发布的平台技能（那是一份独立的快照与目录），要下架得走
+    技能管理端的下架功能——清理函数会在这种情况下明确提示，而不是替用户悄悄下架。
+    """
     try:
         skill_dir = _validate_personal_skill_path(user, skill_id)
         if not os.path.exists(skill_dir):
             raise HTTPException(status_code=404, detail="个人技能目录不存在")
         shutil.rmtree(skill_dir)
-        return {"status": "success", "message": f"个人技能 {skill_id} 已物理删除"}
+        report = await remove_skill_references(
+            session,
+            skill_id=skill_id,
+            scope="personal",
+            actor=user,
+        )
+        return {
+            "status": "success",
+            "data": report,
+            "message": f"个人技能 {skill_id} 已物理删除",
+        }
     except HTTPException:
         raise
     except Exception as e:

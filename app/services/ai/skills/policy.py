@@ -7,6 +7,11 @@
 读判定（``app/utils/fs_access.py``）是同步函数，而禁用集合要查库（异步），所以这里额外维护
 一个进程内、带短 TTL 的**同步读缓存**：异步版本查到后写入，同步版本只读缓存，
 **未命中按放行处理**（与加这道闸之前的行为完全一致），避免把 fs 判定变成会抛异常的路径。
+
+**来源口径（scope）**：禁用只针对"平台发布的那一份"公共技能，个人技能与公共技能可能同名
+（见 ``app/utils/skill_metadata.is_personal_skill_attachment``），因此凡是"取禁用集合/判禁用"
+的入口都接受一个可选 ``scope``：传 ``personal`` 时走个人口径（集合恒为空，且不查库），
+缓存键也按"个人 / 公共（含未指定）"分成两维，避免同名技能共用同一份判定结果。
 """
 
 from __future__ import annotations
@@ -16,6 +21,11 @@ import threading
 import time
 from collections import OrderedDict
 from typing import Any, Iterable, Optional, Tuple
+
+from app.utils.skill_metadata import (
+    is_personal_skill_attachment,
+    is_personal_skill_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,29 +122,51 @@ def resolve_agent_scope(explicit_agent_id: Any = None) -> Optional[str]:
     return None
 
 
-def _scoped_cache_key(user_id: Any, agent_id: Any = None) -> Optional[str]:
-    """同步读缓存的键 = 身份 | 智能体作用域。
+def _scoped_cache_key(
+    user_id: Any, agent_id: Any = None, scope: Any = None
+) -> Optional[str]:
+    """同步读缓存的键 = 身份 | 智能体作用域 [| 来源口径]。
 
     作用域段用 ``-`` 表示全局（无智能体上下文），与权限缓存 v6 的键格式同一约定。
+
+    ``scope`` 只区分**个人口径**这一维（``...|personal``）：个人技能永不属于公共禁用集合，
+    个人判定恒为空集，若与公共口径共用同一个键，向个人键写入空集就会把公共技能的禁用
+    结果覆盖掉（反向亦然），表现为"同名公共/个人技能互相串状态"。公共与"未指定"共用
+    同一维是刻意的：既有预热调用点（``prime_forbidden_skill_cache``）都不传 scope，若把
+    ``global`` 单列一维，预热写的是未指定键、判定读的是 global 键，会永远未命中 →
+    fail-open 漏禁公共技能。
     """
     base = _cache_key(user_id)
     if base is None:
         return None
-    return f"{base}|{resolve_agent_scope(agent_id) or '-'}"
+    key = f"{base}|{resolve_agent_scope(agent_id) or '-'}"
+    return f"{key}|personal" if is_personal_skill_scope(scope) else key
 
 
 def remember_forbidden_skill_ids(
-    user_id: Any, skill_ids: Optional[Iterable[Any]], agent_id: Any = None
+    user_id: Any,
+    skill_ids: Optional[Iterable[Any]] = None,
+    agent_id: Any = None,
+    scope: Any = None,
 ) -> None:
     """把禁用集合写进同步读缓存（覆盖同 key 的旧值，超出容量按插入序淘汰）。
 
-    键含智能体作用域：同一用户在不同智能体里的禁用集合不同，共用键会互相覆盖，
-    表现为"切个智能体就漏禁/误禁"。
+    键含智能体作用域与来源口径：同一用户在不同智能体里的禁用集合不同，共用键会互相覆盖，
+    表现为"切个智能体就漏禁/误禁"；个人口径下**强制写入空集**——绝不接受调用方传入的 id
+    集合，否则把公共技能的禁用状态顺手写进个人维，同步读判定就会拿它去拦个人技能。
     """
-    key = _scoped_cache_key(user_id, agent_id)
+    key = _scoped_cache_key(user_id, agent_id, scope)
     if key is None:
         return
-    entry = (time.monotonic(), _normalize_skill_ids(skill_ids))
+    if is_personal_skill_scope(scope):
+        if _normalize_skill_ids(skill_ids):
+            logger.debug(
+                "[forbidden] 个人口径不接受禁用集合（个人技能永不被禁），已按空集写入：%s", key
+            )
+        normalized_ids: frozenset[str] = frozenset()
+    else:
+        normalized_ids = _normalize_skill_ids(skill_ids)
+    entry = (time.monotonic(), normalized_ids)
     with _forbidden_skill_cache_lock:
         _forbidden_skill_cache.pop(key, None)
         _forbidden_skill_cache[key] = entry
@@ -165,10 +197,13 @@ def _read_cached_entry(key: Optional[str]) -> Optional[Tuple[float, frozenset[st
 
 
 def get_cached_forbidden_skill_ids(
-    user_id: Any, agent_id: Any = None
+    user_id: Any, agent_id: Any = None, scope: Any = None
 ) -> Optional[frozenset[str]]:
-    """同步读缓存：命中返回集合，未命中 / 已过期返回 ``None``（键含智能体作用域）。"""
-    key = _scoped_cache_key(user_id, agent_id)
+    """同步读缓存：命中返回集合，未命中 / 已过期返回 ``None``。
+
+    键含智能体作用域与来源口径（见 ``_scoped_cache_key``）。
+    """
+    key = _scoped_cache_key(user_id, agent_id, scope)
     entry = _read_cached_entry(key)
     if entry is None:
         # 未命中即放行，这条日志是排查"为什么没拦住"的唯一线索。
@@ -185,19 +220,28 @@ def is_platform_skill_id_forbidden(
     skill_id: str,
     user_info: Optional[dict] = None,
     agent_id: Any = None,
+    scope: Any = None,
 ) -> bool:
-    """同步判定：某个公共技能 id 是否在当前用户的禁用集合里。
+    """同步判定：某个**公共**技能 id 是否在当前用户的禁用集合里。
+
+    ``scope`` 传 ``personal`` 时恒为 ``False``（个人技能不属于公共禁用集合，同名公共技能的
+    禁用状态不连坐）：连缓存都不查，免得读到公共那一维的结果。
 
     **fail-open**：拿不到集合（未预热 / 已过期 / 查询失败）一律按"未禁用"处理。这个函数处在
     原生文件工具与文件浏览器接口的热路径上，把"权限服务抖动或尚未预热"解释成"所有技能目录
     都读不到"，会把合法功能（技能脚本、未禁技能的 SKILL.md）一起打死——禁用是收口措施，
     不该成为新的可用性单点。
     """
+    if is_personal_skill_scope(scope):
+        logger.debug(
+            "[forbidden] 个人技能口径不适用公共禁用集合，直接放行 skill_id=%s", skill_id
+        )
+        return False
     clean_id = str(skill_id or "").strip()
     if not clean_id:
         return False
     user_id = resolve_user_id_from_user_info(user_info) or _resolve_current_user_id()
-    skill_ids = get_cached_forbidden_skill_ids(user_id, agent_id)
+    skill_ids = get_cached_forbidden_skill_ids(user_id, agent_id, scope)
     if skill_ids is None:
         return False
     return clean_id in skill_ids
@@ -209,6 +253,7 @@ async def prime_forbidden_skill_cache(
     user_info: Optional[dict] = None,
     max_age_seconds: Optional[float] = None,
     agent_id: Any = None,
+    scope: Any = None,
 ) -> None:
     """异步预热同步读缓存（带节流，绝不抛异常）。
 
@@ -218,6 +263,9 @@ async def prime_forbidden_skill_cache(
     ``agent_id`` 缺省时按 ``resolve_agent_scope`` 自动解析（会话内即为该会话的智能体）：
     读缓存键含作用域，预热点必须与同步读判定算出同一个键，否则预热写了全局键、
     判定去读智能体键，永远未命中——表现为"智能体级禁用对技能正文完全不起作用"。
+
+    ``scope`` 是来源口径（缺省 = 公共口径），同样必须与同步读判定一致：键不一致就会永远
+    未命中（个人口径只会是空集，不会漏禁公共技能）。
     """
     max_age = (
         FORBIDDEN_SKILL_CACHE_REFRESH_SECONDS
@@ -230,12 +278,12 @@ async def prime_forbidden_skill_cache(
         or resolve_user_id_from_user_info(user_info)
         or _resolve_current_user_id()
     )
-    cache_key = _scoped_cache_key(user_id, resolved_agent)
+    cache_key = _scoped_cache_key(user_id, resolved_agent, scope)
     entry = _read_cached_entry(cache_key)
     if entry is not None and max_age > 0 and (time.monotonic() - entry[0]) <= max_age:
         return
     try:
-        await get_forbidden_skill_ids(user_id, resolved_agent)
+        await get_forbidden_skill_ids(user_id, resolved_agent, scope=scope)
     except Exception:
         # get_forbidden_skill_ids 自身已吞掉查询异常；这里只兜住身份解析都失败的情况
         logger.debug(
@@ -244,7 +292,7 @@ async def prime_forbidden_skill_cache(
 
 
 async def get_forbidden_skill_ids(
-    explicit_user_id: Any = None, explicit_agent_id: Any = None
+    explicit_user_id: Any = None, explicit_agent_id: Any = None, *, scope: Any = None
 ) -> set[str]:
     """当前用户被禁的公共技能 id 集合（含角色级合并）。
 
@@ -253,6 +301,10 @@ async def get_forbidden_skill_ids(
     - 查询失败返回空集合 + error 日志。这里刻意**不**跟随工具/命令侧的 fail-closed：
       工具拒绝的是"这一次调用"，代价有限；技能侧一旦 fail-closed，权限服务抖动会让该用户
       **整个技能清单**不可用，代价与收益不对称。方向不同是刻意的取舍，用 error 级别保证可告警。
+    - ``scope="personal"`` 走个人口径：禁用集合是"平台发布的那一份"的清单，个人技能永远不在
+      其中，因此**直接返回空集且不查库**——个人技能不能用公共技能 id 去查禁用集合/白名单，
+      同名时会把公共技能的禁用状态串到个人技能上。空集同时写进个人维缓存，让同步读判定
+      与这里同口径（个人维恒为空，公共维不受影响）。
     """
     from app.core.context import get_current_agent_context
 
@@ -270,8 +322,14 @@ async def get_forbidden_skill_ids(
     if not user_id:
         logger.warning("[forbidden] No user identity when resolving forbidden skills; allowing all")
         return set()
+    if is_personal_skill_scope(scope):
+        remember_forbidden_skill_ids(user_id, set(), agent_id, scope)
+        logger.debug(
+            "[forbidden] 个人技能口径：禁用集合只针对公共技能，跳过权限查询（user=%s）", user_id
+        )
+        return set()
     if explicit_user_id is None and ctx is not None and getattr(ctx, "is_admin", False):
-        remember_forbidden_skill_ids(user_id, set(), agent_id)
+        remember_forbidden_skill_ids(user_id, set(), agent_id, scope)
         return set()
 
     try:
@@ -283,7 +341,7 @@ async def get_forbidden_skill_ids(
                 int(user_id), agent_id
             )
         if "admin" in (perms.roles or set()):
-            remember_forbidden_skill_ids(user_id, set(), agent_id)
+            remember_forbidden_skill_ids(user_id, set(), agent_id, scope)
             return set()
         forbidden = {
             str(skill_id).strip()
@@ -292,7 +350,7 @@ async def get_forbidden_skill_ids(
         }
         # 同步读判定（fs_access）只能读这份缓存，因此每次成功查询都要刷新它；
         # 失败**不写缓存**，让下一次调用真实重试，而不是把"空集合"锁在 TTL 里。
-        remember_forbidden_skill_ids(user_id, forbidden, agent_id)
+        remember_forbidden_skill_ids(user_id, forbidden, agent_id, scope)
         return forbidden
     except Exception:
         logger.exception(
@@ -308,15 +366,17 @@ def drop_forbidden_skill_items(
     """显式挂载过滤：丢掉被禁的技能附件，其他类型附件原样保留。
 
     用户的挂载动作是"绕过快捷入口直接指定"，因此这里必须拦——否则禁用形同虚设。
+
+    只禁**公共**技能：个人技能与公共技能可能同名，若这里不看 scope，用户自建的
+    同名个人技能会在显式挂载时被静默丢弃。与 `sanitize_forbidden_skill_context`
+    的 `blocked_ids = forbidden - personal_ids` 必须同口径，故复用同一判定函数
+    （``is_personal_skill_attachment``：附件顶层 ``scope`` 与 ``skillMeta/skill_meta.scope``
+    两处都看）。挂载列表可能是混合来源（个人 + 公共），因此来源判定必须**逐项**做。
     """
     kept = list(items or [])
     forbidden = {str(skill_id).strip() for skill_id in (forbidden_ids or []) if str(skill_id).strip()}
     if not forbidden:
         return kept
-    # 只禁**公共**技能：个人技能与公共技能可能同名，若这里不看 scope，用户自建的
-    # 同名个人技能会在显式挂载时被静默丢弃。与 `sanitize_forbidden_skill_context`
-    # 的 `blocked_ids = forbidden - personal_ids` 必须同口径，故复用同一判定函数。
-    from app.utils.skill_metadata import is_personal_skill_attachment
 
     retained: list[dict] = []
     dropped: list[str] = []

@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.ai.agent_service import agent_service
@@ -20,6 +20,7 @@ from app.core.dependencies import require_admin, require_api_key
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
+from app.utils.skill_metadata import normalize_skill_scope
 from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
@@ -509,6 +510,18 @@ class SkillMeta(BaseModel):
     id: Optional[str] = Field(default=None, description="技能 ID")
     name: Optional[str] = Field(default=None, description="SKILL.md Frontmatter name")
     description: Optional[str] = Field(default=None, description="SKILL.md Frontmatter description")
+    # 技能来源口径：前端 handleSelectSkill 会同时写进附件与这里（global/public=公共，personal=个人）。
+    # 必须显式声明：Pydantic 2 默认 extra='ignore'，未声明的字段会被**静默丢弃**，而历史消息是
+    # 用 msg.model_dump() 还原的，一丢就再也拿不回来——个人技能会被当成公共技能去解析与判禁用。
+    scope: Optional[str] = Field(
+        default=None, description="技能来源口径：personal（个人库）或 global/public（公共库）"
+    )
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _normalize_scope(cls, value: Any) -> Optional[str]:
+        """归一化 scope；未知取值按"未指定"处理，**绝不因为客户端写了怪值而 500**。"""
+        return normalize_skill_scope(value, source="SkillMeta.scope")
 
 
 class ChatFile(BaseModel):
@@ -519,6 +532,17 @@ class ChatFile(BaseModel):
     ext: str = Field(..., description="文件后缀名")
     skillMeta: Optional[SkillMeta] = Field(default=None, description="技能 Frontmatter 元数据（type=skill 时）")
     skill_meta: Optional[SkillMeta] = Field(default=None, description="skillMeta 蛇形命名别名")
+    # 与 SkillMeta.scope 同源，前端两处都发；下游（注入器的挂载解析、禁用过滤）先看顶层再看
+    # skillMeta，因此两处都必须能带回来（见 app/utils/skill_metadata.is_personal_skill_attachment）。
+    scope: Optional[str] = Field(
+        default=None, description="技能来源口径：personal（个人库）或 global/public（公共库）"
+    )
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _normalize_scope(cls, value: Any) -> Optional[str]:
+        """归一化 scope；未知取值按"未指定"处理，**绝不因为客户端写了怪值而 500**。"""
+        return normalize_skill_scope(value, source="ChatFile.scope")
 
 class ChatMessage(BaseModel):
     role: str = Field(..., pattern="^(user|assistant|system)$")
