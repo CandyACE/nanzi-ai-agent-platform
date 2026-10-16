@@ -21,6 +21,7 @@
     面向**集成方**（/embed/chat 与 ?ticket= 是接入口径，对终端用户无意义，不该占据主视觉）。
   -->
   <div
+    ref="scrollContainerRef"
     v-if="gateState === 'granted'"
     class="h-full w-full overflow-y-auto overflow-x-hidden bg-gray-100 custom-scrollbar"
   >
@@ -42,13 +43,31 @@
          不能连它一起删掉。
       所谓「低调」指的是**不用强调色**（不用 primary 实底、不用粗体大字），
       而**不是降低可读性**——它只降视觉权重，不降尺寸、不降对比度。
+      6. **滚动时收起**：它是 fixed 浮层，滚动正文时必然压住内容。方向感知：
+         向下滚（在看内容）收起、向上滚（想回上面）立即恢复，另加 1.2 秒兜底恢复，
+         防「滚到底才想返回、浮标恰好收起」。详见 script 的 handleContainerScroll。
+      7. **可拖动、但不记忆位置**：滚动收起解决的是「滚动时的遮挡」，但静止时它仍可能
+         压住某个按钮（用户截图：正好盖住「访问凭证」的查看按钮）。所以允许触摸拖动。
+         **位置不持久化**——用户明确要求，刷新或重新进入即回到右下角。
+         拖动与点击、拖动与滚动都必须区分开，详见 script 的 handleFabTouchStart 一段。
     -->
     <button
       v-if="backToChat"
+      ref="backFabRef"
       type="button"
-      class="fixed bottom-4 right-4 z-30 inline-flex min-h-11 items-center gap-2 rounded-full bg-white/90 px-4 text-sm font-medium text-gray-600 shadow-sm transition-all hover:bg-white hover:text-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-95 sm:hidden dark:bg-gray-900/90 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-primary"
+      class="fixed z-30 inline-flex min-h-11 items-center gap-2 rounded-full bg-white/90 px-4 text-sm font-medium text-gray-600 shadow-sm transition-opacity duration-200 hover:bg-white hover:text-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-95 sm:hidden dark:bg-gray-900/90 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-primary"
+      :class="[
+        fabPos ? '' : 'bottom-4 right-4',
+        backFabHidden ? 'pointer-events-none translate-y-2 opacity-0' : 'translate-y-0 opacity-100',
+      ]"
+      :style="fabPos ? { left: fabPos.left + 'px', top: fabPos.top + 'px' } : undefined"
+      :aria-hidden="backFabHidden ? 'true' : undefined"
       aria-label="返回对话"
       @click="goBackToChat"
+      @touchstart.passive="handleFabTouchStart"
+      @touchmove="handleFabTouchMove"
+      @touchend="handleFabTouchEnd"
+      @touchcancel="handleFabTouchEnd"
     >
       <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
@@ -198,8 +217,140 @@ const detectBackToChat = () => {
   backToChat.value = typeof back === "string" && back.startsWith("/embed/chat");
 };
 
+// --- 返回浮标的拖动 ---------------------------------------------------------
+// 用户反馈（原文）：「还是需要能支持拖动，因为有时候会挡住我后面的按钮，我要手动拖开」。
+// 滚动收起解决的是「滚动时的遮挡」，拖动解决的是「静止时压住某个按钮」——两者正交。
+// **位置不持久化**（用户明确要求）：只在本次会话内有效，刷新或重新进入即回右下角。
+
+/** 位移低于该值算点击、不小于则算拖动：避免在浮标上轻滑一下就被判成拖动。 */
+const FAB_DRAG_THRESHOLD_PX = 8;
+/** 拖到贴边时留出的空隙，免得手指按不到。 */
+const FAB_VIEWPORT_MARGIN_PX = 8;
+/** 拖动结束后抑制返回点击的时长：浏览器可能补发 click。 */
+const FAB_CLICK_SUPPRESS_MS = 300;
+
+const backFabRef = ref<HTMLElement | null>(null);
+/** null 表示仍在默认的右下角；一旦拖动过就改用绝对坐标。 */
+const fabPos = ref<{ left: number; top: number } | null>(null);
+
+let fabDragging = false;
+let dragMoved = false;
+let dragEndedAt = 0;
+let dragOriginX = 0;
+let dragOriginY = 0;
+let dragOriginLeft = 0;
+let dragOriginTop = 0;
+let fabWidth = 0;
+let fabHeight = 0;
+
+const clampToViewport = (left: number, top: number) => {
+  const maxLeft = window.innerWidth - FAB_VIEWPORT_MARGIN_PX - fabWidth;
+  const maxTop = window.innerHeight - FAB_VIEWPORT_MARGIN_PX - fabHeight;
+  return {
+    left: Math.min(Math.max(left, FAB_VIEWPORT_MARGIN_PX), Math.max(FAB_VIEWPORT_MARGIN_PX, maxLeft)),
+    top: Math.min(Math.max(top, FAB_VIEWPORT_MARGIN_PX), Math.max(FAB_VIEWPORT_MARGIN_PX, maxTop)),
+  };
+};
+
+const handleFabTouchStart = (event: TouchEvent) => {
+  const el = backFabRef.value;
+  const touch = event.touches[0];
+  if (!el || !touch) return;
+
+  // 每轮拖动都从元素当前的实际位置起算：这样「默认右下角」与「已拖动」两种状态自洽，
+  // 不必从 left/top 反推默认位置。
+  const rect = el.getBoundingClientRect();
+  dragOriginLeft = rect.left;
+  dragOriginTop = rect.top;
+  fabWidth = rect.width;
+  fabHeight = rect.height;
+  dragOriginX = touch.clientX;
+  dragOriginY = touch.clientY;
+  dragMoved = false;
+  fabDragging = true;
+};
+
+const handleFabTouchMove = (event: TouchEvent) => {
+  if (!fabDragging) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+
+  const dx = touch.clientX - dragOriginX;
+  const dy = touch.clientY - dragOriginY;
+
+  if (!dragMoved) {
+    // 未越过阈值：不接管手势，让页面照常滚动
+    if (Math.abs(dx) < FAB_DRAG_THRESHOLD_PX && Math.abs(dy) < FAB_DRAG_THRESHOLD_PX) return;
+    dragMoved = true;
+  }
+
+  // 已确认是拖动：阻止页面跟着滚，否则手指一挪内容就乱跑
+  event.preventDefault();
+  fabPos.value = clampToViewport(dragOriginLeft + dx, dragOriginTop + dy);
+};
+
+const handleFabTouchEnd = () => {
+  fabDragging = false;
+  if (dragMoved) dragEndedAt = Date.now();
+};
+
 const goBackToChat = () => {
+  // 刚拖完松手时浏览器可能补发 click；吃掉这一步，否则「拖开一下」会把用户送回对话页
+  if (dragEndedAt && Date.now() - dragEndedAt < FAB_CLICK_SUPPRESS_MS) return;
   router.back();
+};
+
+// --- 返回浮标的方向感知收起 -----------------------------------------------
+// 浮标是 fixed 浮层，滚动正文时必然压住内容；向下滚（在看内容）时收起，
+// 向上滚（想回上面）或停手 1.2 秒后恢复。
+// 注意：本页滚动的是**容器**而不是 window（见模板上的 scrollContainerRef），
+// 监听必须挂在容器上，挂到 window 会一个事件都收不到。
+
+/** 位移低于该值视为抖动：移动端惯性滚动会产生大量微小反向抖动。 */
+const SCROLL_JITTER_PX = 8;
+/** 顶部附近不收起：刚进页面只滚一点点时，「在看内容」的语义还不成立。 */
+const SCROLL_TOP_GUARD_PX = 64;
+/** 兜底恢复时长：防「滚到底才想返回，浮标恰好是收起的」。 */
+const BACK_FAB_RESTORE_MS = 1200;
+
+const scrollContainerRef = ref<HTMLElement | null>(null);
+const backFabHidden = ref(false);
+
+/** 在 onMounted 时留存，供 onUnmounted 解绑——那时 ref 可能已被置空。 */
+let scrollEl: HTMLElement | null = null;
+let lastScrollTop = 0;
+let restoreTimer: number | undefined;
+
+const clearRestoreTimer = () => {
+  if (restoreTimer !== undefined) {
+    window.clearTimeout(restoreTimer);
+    restoreTimer = undefined;
+  }
+};
+
+const handleContainerScroll = () => {
+  if (!scrollEl) return;
+
+  const top = scrollEl.scrollTop;
+  const delta = top - lastScrollTop;
+
+  if (Math.abs(delta) < SCROLL_JITTER_PX) return;
+
+  if (delta > 0 && top > SCROLL_TOP_GUARD_PX) {
+    // 向下滚：收起，并排一个兜底恢复
+    backFabHidden.value = true;
+    clearRestoreTimer();
+    restoreTimer = window.setTimeout(() => {
+      backFabHidden.value = false;
+      restoreTimer = undefined;
+    }, BACK_FAB_RESTORE_MS);
+  } else if (delta < 0) {
+    // 向上滚：立即恢复，并取消兜底（否则它还会再触发一次多余跳变）
+    clearRestoreTimer();
+    backFabHidden.value = false;
+  }
+
+  lastScrollTop = top;
 };
 
 /** 只有认证类失败才算「未登录」；网络抖动与上游 5xx 不是。 */
@@ -509,8 +660,18 @@ onMounted(verifyCredential);
 // 挂载后再判定来源：setup 阶段首次导航可能尚未落定 history.state.back。
 onMounted(detectBackToChat);
 
+// 监听挂在**滚动容器**上：本页滚动的是那个 overflow-y-auto 的 div，不是 window。
+onMounted(() => {
+  scrollEl = scrollContainerRef.value;
+  // passive: 只读监听，不阻止默认行为，避免拖累滚动性能
+  scrollEl?.addEventListener("scroll", handleContainerScroll, { passive: true });
+});
+
 onUnmounted(() => {
   window.removeEventListener("message", handleHostMessage);
+  scrollEl?.removeEventListener("scroll", handleContainerScroll);
+  scrollEl = null;
+  clearRestoreTimer();
 });
 </script>
 

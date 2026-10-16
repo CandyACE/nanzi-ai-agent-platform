@@ -142,3 +142,185 @@ def test_return_uses_history_back():
     m = re.search(r"const goBackToChat = \(\) => \{(.*?)\n\};", view, re.S)
     assert m, "缺少 goBackToChat"
     assert "router.back()" in m.group(1), "未使用 router.back()"
+
+
+def test_scroll_listener_is_bound_to_container_not_window():
+    """监听必须挂在滚动容器上。
+
+    个人中心的滚动容器是 `<div class="h-full w-full overflow-y-auto">`，
+    页面本身不滚动——挂到 window 上会一个事件都收不到。
+    """
+    view = _view()
+    assert 'ref="scrollContainerRef"' in view, "滚动容器缺少 ref，无法挂监听"
+    assert "scrollContainerRef.value" in view, "未通过容器 ref 取元素"
+    assert "addEventListener(\"scroll\"" in view or "addEventListener('scroll'" in view, (
+        "未注册 scroll 监听"
+    )
+    assert 'window.addEventListener("scroll"' not in view, (
+        "监听挂到了 window 上——本页滚动的是容器，收不到事件"
+    )
+
+
+def test_back_fab_hides_on_scroll_down():
+    """向下滚（看内容）时收起。"""
+    view = _view()
+    m = re.search(r"const handleContainerScroll = \(\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 handleContainerScroll"
+    body = m.group(1)
+    assert "backFabHidden.value = true" in body, "向下滚未收起浮标"
+    assert "delta > 0" in body, "未按位移方向判断"
+
+
+def test_back_fab_restores_immediately_on_scroll_up():
+    """向上滚（想回上面）时立即恢复。"""
+    view = _view()
+    m = re.search(r"const handleContainerScroll = \(\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 handleContainerScroll"
+    body = m.group(1)
+    assert "delta < 0" in body, "未处理向上滚"
+    assert "backFabHidden.value = false" in body, "向上滚未恢复浮标"
+
+
+def test_scroll_up_cancels_pending_restore_timer():
+    """向上滚必须取消待执行的兜底定时器。
+
+    否则「立即恢复」之后，先前排队的定时器还会再触发一次——无副作用，
+    但属于多余的状态跳变。
+    """
+    view = _view()
+    m = re.search(r"const handleContainerScroll = \(\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 handleContainerScroll"
+    up_branch = m.group(1).split("delta < 0")[1]
+    assert "clearRestoreTimer()" in up_branch, "向上滚分支未取消兜底定时器"
+
+
+def test_back_fab_has_restore_fallback():
+    """停止滚动后必须有兜底恢复。
+
+    纯方向感知的洞：滚到底部后才想返回时，最后一段动作是向下滚，浮标恰好收起。
+    用户明确要求保留这条兜底。
+    """
+    view = _view()
+    m = re.search(r"const handleContainerScroll = \(\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 handleContainerScroll"
+    body = m.group(1)
+    assert "setTimeout" in body, "缺少兜底恢复定时器"
+    assert "BACK_FAB_RESTORE_MS" in body, "定时器未使用具名常量"
+    assert re.search(r"const BACK_FAB_RESTORE_MS = \d+", view), "未定义恢复时长常量"
+
+
+def test_scroll_jitter_threshold_and_top_guard_exist():
+    """位移阈值与顶部保护都必须存在。
+
+    阈值：移动端惯性滚动会产生大量微小反向抖动，不设阈值浮标会疯狂闪烁。
+    顶部保护：刚进页面（scrollTop = 0）只向下滚一点点时，「在看内容」的语义还不成立。
+    """
+    view = _view()
+    assert re.search(r"const SCROLL_JITTER_PX = \d+", view), "未定义抖动阈值常量"
+    assert re.search(r"const SCROLL_TOP_GUARD_PX = \d+", view), "未定义顶部保护常量"
+    m = re.search(r"const handleContainerScroll = \(\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 handleContainerScroll"
+    body = m.group(1)
+    assert "SCROLL_JITTER_PX" in body, "未使用抖动阈值"
+    assert "SCROLL_TOP_GUARD_PX" in body, "未使用顶部保护"
+
+
+def test_hidden_state_is_inert_and_accessible():
+    """收起态必须同时不可点且对辅助技术隐藏。
+
+    pointer-events-none 只挡指针，挡不住屏幕阅读器——不加 aria-hidden
+    会读出一个「看不见但存在」的按钮。
+    """
+    view = _view()
+    assert "pointer-events-none" in view, "收起态缺少 pointer-events-none"
+    assert "aria-hidden" in _return_button_tag(), "收起态缺少 aria-hidden"
+    assert "opacity-0" in view, "收起态缺少透明度变化"
+
+
+def test_scroll_listener_and_timer_are_cleaned_up():
+    """卸载时必须移除监听并清掉定时器，否则泄漏。"""
+    view = _view()
+    assert "removeEventListener" in view, "未移除 scroll 监听"
+    assert "clearRestoreTimer" in view, "未清理兜底定时器"
+
+
+def test_back_fab_is_draggable_by_touch():
+    """浮标必须支持触摸拖动。
+
+    用户反馈（原文）：「还是需要能支持拖动，因为有时候会挡住我后面的按钮，
+    我要手动拖开」。滚动收起解决的是「滚动时遮挡」，拖动解决的是
+    「静止时压住了某个按钮」——两者正交，都要有。
+    """
+    view = _view()
+    for event in ("touchstart", "touchmove", "touchend"):
+        assert event in view, f"浮标缺少 {event} 处理"
+
+
+def test_drag_position_is_not_persisted():
+    """拖动位置不得持久化——用户明确要求「不需要持久化记忆」。
+
+    刷新或重新进入即回到默认右下角。
+    注：不能笼统断言「文件里没有 sessionStorage」——本页用 sessionStorage
+    按 instance_id 存 ticket 凭据，那是另一件事。只断言 fab 位置没进存储。
+    """
+    view = _view()
+    assert re.search(r"(localStorage|sessionStorage|indexedDB)[^\n]*[Ff]ab", view) is None, (
+        "拖动位置被写进了存储，但用户明确要求不持久化"
+    )
+    assert "saveFabPosition" not in view, "出现了疑似持久化拖动位置的实现"
+
+
+def test_drag_requires_threshold_before_taking_over():
+    """位移越过阈值才算拖动，且拖动时接管手势。
+
+    阈值以下不接管：否则手指在浮标上轻微滑动就变成拖动，页面也滚不动。
+    """
+    view = _view()
+    assert re.search(r"const FAB_DRAG_THRESHOLD_PX = \d+", view), "未定义拖动阈值常量"
+    m = re.search(r"const handleFabTouchMove = \(.*?\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 handleFabTouchMove"
+    body = m.group(1)
+    assert "FAB_DRAG_THRESHOLD_PX" in body, "未使用拖动阈值"
+    assert "preventDefault" in body, "拖动时未阻止页面滚动"
+
+
+def test_drag_suppresses_the_return_click():
+    """拖动后松手不得触发返回。
+
+    否则「把挡住的按钮拖开」这一步会顺手把用户送回对话页、丢掉上下文。
+    """
+    view = _view()
+    assert re.search(r"const FAB_CLICK_SUPPRESS_MS = \d+", view), "未定义点击抑制时长常量"
+    m = re.search(r"const goBackToChat = \(\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 goBackToChat"
+    body = m.group(1)
+    assert "router.back()" in body, "未使用 router.back()"
+    assert "dragEndedAt" in body, "拖动后未抑制返回点击"
+    assert "FAB_CLICK_SUPPRESS_MS" in body, "抑制时长未使用具名常量"
+
+
+def test_drag_is_clamped_to_viewport():
+    """拖动必须夹在视口内，否则浮标会被拖出屏幕、再也点不到。"""
+    view = _view()
+    assert re.search(r"const FAB_VIEWPORT_MARGIN_PX = \d+", view), "未定义边缘留白常量"
+    m = re.search(r"const clampToViewport = \(.*?\) => \{(.*?)\n\};", view, re.S)
+    assert m, "缺少 clampToViewport"
+    body = m.group(1)
+    assert "innerWidth" in body and "innerHeight" in body, "未按视口尺寸限制"
+
+
+def test_dragged_position_switches_to_absolute_coordinates():
+    """拖动后改用绝对坐标定位，未拖动时仍是默认右下角。
+
+    绝对坐标让手指跟手，也不必从「右下角」反推默认位置。
+    断言必须落在 :style 上——只查「标签里有没有 fabPos」是不够的，
+    :class 里同样会出现 fabPos，那样即使删掉定位绑定也照样通过。
+    """
+    view = _view()
+    assert "fabPos" in view, "缺少拖动位置状态"
+    tag = _return_button_tag()
+    assert ":style" in tag and "fabPos" in tag, "模板未把拖动位置绑到 style"
+    assert "left" in tag and "top" in tag, "未使用绝对坐标"
+    assert "bottom-4 right-4" in tag, "未保留默认右下角"
+    assert "touchstart" in tag, "模板未绑定触摸事件"
+
